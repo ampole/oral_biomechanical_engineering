@@ -1,0 +1,944 @@
+ 0, 0, 0],
+            [-nu12/E1, -nu23/E2, 1/E2, 0, 0, 0],
+            [0, 0, 0, 1/G23, 0, 0],
+            [0, 0, 0, 0, 1/G12, 0],
+            [0, 0, 0, 0, 0, 1/G12]
+        ];
+    }
+    
+    // Effective modulus for loading direction (simplified)
+    static effectiveModulus(theta = 0) {
+        const E1 = P.boneE1 * 1e3, E2 = P.boneE2 * 1e3;
+        const c = Math.cos(theta), s = Math.sin(theta);
+        return 1 / (c*c*c*c/E1 + s*s*s*s/E2 + c*c*s*s*(1/P.boneG/1e3 - 2*P.boneNu12/E1));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// FRACTURE MECHANICS (LEFM + J-integral + Paris Law)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class Fracture {
+    // Mode I stress intensity factor
+    static KI(sigma, a) {
+        const Y = 1.12; // Edge crack geometry factor
+        return Y * sigma * Math.sqrt(PI * a);
+    }
+    
+    // Mode II (shear)
+    static KII(tau, a) {
+        const Y = 1.12;
+        return Y * tau * Math.sqrt(PI * a);
+    }
+    
+    // J-integral (plane strain)
+    static Jintegral(KI, KII = 0, E = P.E0 * 1e6, nu = P.nuPdl) {
+        const Ep = E / (1 - nu * nu); // Plane strain
+        return (KI * KI + KII * KII) / Ep;
+    }
+    
+    // Stress concentration from curvature
+    static stressConcentration(curv, flaw_um) {
+        const rho = curv > 0.001 ? 1 / curv : 1000; // mm
+        const a = flaw_um / 1000; // mm
+        return 1 + 2 * Math.sqrt(a / rho);
+    }
+    
+    // Paris law crack growth rate
+    static dadN(dK) {
+        if (dK <= 0) return 0;
+        return P.parisC * Math.pow(dK * 1e6, P.parisM); // m/cycle
+    }
+    
+    // Fracture probability (Weibull)
+    static Pfracture(KI, KIC, m = 12) {
+        if (KI <= 0) return 0;
+        return 1 - Math.exp(-Math.pow(KI / KIC, m));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ACOUSTIC EMISSION MODEL
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class AcousticEmission {
+    static eventRate(sigma, sigmaRef = 30) {
+        if (sigma <= 0) return 0;
+        const lambda0 = 0.1, m = 4.5;
+        return lambda0 * Math.pow(sigma / sigmaRef, m);
+    }
+    
+    static updateSpectrum(sigma, KI_ratio) {
+        // Decay
+        for (let i = 0; i < S.aeSpectrum.length; i++) {
+            S.aeSpectrum[i] *= 0.92;
+        }
+        
+        // Frequency bands
+        const bands = [
+            { low: 3, high: 10, amp: sigma * 0.01, type: 'pdl' },
+            { low: 10, high: 16, amp: KI_ratio * 0.5, type: 'dentin' },
+            { low: 5, high: 8, amp: (sigma > 5 ? (sigma - 5) * 0.02 : 0), type: 'bone' },
+            { low: 2, high: 6, amp: (KI_ratio > 0.6 ? Math.pow(KI_ratio, 2) : 0), type: 'fracture' }
+        ];
+        
+        bands.forEach(band => {
+            for (let i = band.low; i <= band.high && i < S.aeSpectrum.length; i++) {
+                const w = Math.sin((i - band.low) / (band.high - band.low + 1) * PI);
+                S.aeSpectrum[i] += band.amp * w;
+                S.aeSpectrum[i] = Math.min(1, S.aeSpectrum[i]);
+            }
+        });
+        
+        // Random noise
+        for (let i = 0; i < S.aeSpectrum.length; i++) {
+            S.aeSpectrum[i] += Math.random() * 0.015;
+            S.aeSpectrum[i] = Math.min(1, Math.max(0, S.aeSpectrum[i]));
+        }
+    }
+    
+    // Gutenberg-Richter b-value
+    static bValue() {
+        if (S.aeMagnitudes.length < 10) return null;
+        const mags = S.aeMagnitudes.slice(-100);
+        const mean = mags.reduce((a, b) => a + b, 0) / mags.length;
+        return 1 / (mean * Math.log(10));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// BAYESIAN RISK (Sequential Monte Carlo)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class BayesianSMC {
+    static update(kObs, KI_ratio) {
+        const kNom = P.E0 * P.pdlArea / P.pdlW;
+        
+        // Likelihoods
+        const L_nom = gaussian(kObs, kNom, kNom * 0.12);
+        const L_pdl = gaussian(kObs, kNom * 0.55, kNom * 0.2);
+        const L_bone = gaussian(kObs, kNom * 0.35, kNom * 0.25);
+        const L_frac = gaussian(kObs, kNom * 0.1, kNom * 0.4);
+        
+        // Priors with transition
+        let pN = L_nom * S.P_nom;
+        let pP = L_pdl * S.P_pdl * (1 + 0.3 * KI_ratio) + S.P_nom * 0.001 * KI_ratio;
+        let pB = L_bone * S.P_bone * (1 + 0.4 * KI_ratio) + S.P_pdl * 0.001 * KI_ratio;
+        let pF = (L_frac + Math.pow(KI_ratio, 4) * 0.05) * S.P_frac * (1 + 3 * Math.pow(KI_ratio, 3)) 
+               + S.P_bone * 0.002 * KI_ratio + S.P_pdl * 0.001 * Math.pow(KI_ratio, 2);
+        
+        const tot = pN + pP + pB + pF + 1e-10;
+        S.P_nom = Math.max(0.001, pN / tot);
+        S.P_pdl = Math.min(0.998, pP / tot);
+        S.P_bone = Math.min(0.998, pB / tot);
+        S.P_frac = Math.min(0.998, pF / tot);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// KALMAN-BUCY FILTER
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class KalmanBucy {
+    static predict(dt) {
+        const {x, P: Pk} = S.kalman;
+        // State transition: [x, v, a]
+        const Phi = [
+            [1, dt, 0.5*dt*dt],
+            [0, 1, dt],
+            [0, 0, 0.95] // acceleration decay
+        ];
+        
+        // Predicted state
+        S.kalman.x = [
+            Phi[0][0]*x[0] + Phi[0][1]*x[1] + Phi[0][2]*x[2],
+            Phi[1][0]*x[0] + Phi[1][1]*x[1] + Phi[1][2]*x[2],
+            Phi[2][0]*x[0] + Phi[2][1]*x[1] + Phi[2][2]*x[2]
+        ];
+        
+        // Process noise
+        const Q = [[dt*dt*dt*dt/4*0.001, dt*dt*dt/2*0.001, dt*dt/2*0.001],
+                   [dt*dt*dt/2*0.001, dt*dt*0.001, dt*0.001],
+                   [dt*dt/2*0.001, dt*0.001, 0.01]];
+        
+        // P = Phi*P*Phi' + Q (simplified)
+        S.kalman.P[0][0] = Pk[0][0] + dt*dt*Pk[1][1] + Q[0][0];
+        S.kalman.P[1][1] = Pk[1][1] + dt*dt*Pk[2][2] + Q[1][1];
+        S.kalman.P[2][2] = 0.9*Pk[2][2] + Q[2][2];
+    }
+    
+    static update(z) {
+        const {x, P: Pk} = S.kalman;
+        const R = 0.005; // Measurement noise
+        const H = [1, 0, 0]; // Measure position only
+        
+        const y = z - x[0]; // Innovation
+        const Sinv = 1 / (Pk[0][0] + R);
+        const K = [Pk[0][0] * Sinv, Pk[1][0] * Sinv || 0, Pk[2][0] * Sinv || 0];
+        
+        S.kalman.x = [x[0] + K[0]*y, x[1] + K[1]*y, x[2] + K[2]*y];
+        S.kalman.P[0][0] = (1 - K[0]) * Pk[0][0];
+        S.kalman.P[1][1] = Pk[1][1] - K[1] * Pk[0][1];
+        S.kalman.P[2][2] = Pk[2][2] - K[2] * Pk[0][2];
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// MONTE CARLO UNCERTAINTY PROPAGATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class MonteCarlo {
+    // Latin Hypercube Sampling
+    static latinHypercube(n, dims) {
+        const samples = [];
+        for (let d = 0; d < dims; d++) {
+            const perm = shuffle([...Array(n).keys()]);
+            for (let i = 0; i < n; i++) {
+                if (!samples[i]) samples[i] = [];
+                samples[i][d] = (perm[i] + Math.random()) / n;
+            }
+        }
+        return samples;
+    }
+    
+    // Run MC simulation
+    static run() {
+        const n = P.mcN;
+        const cov = P.cov / 100;
+        const results = { KI: [], sigma: [], disp: [] };
+        
+        // Parameters to vary: E0, Kic, flaw, pdlW
+        const lhs = this.latinHypercube(n, 4);
+        
+        for (let i = 0; i < n; i++) {
+            const E0_s = P.E0 * (1 + (lhs[i][0] - 0.5) * 2 * cov * randn());
+            const Kic_s = P.Kic * (1 + (lhs[i][1] - 0.5) * 2 * cov * randn());
+            const flaw_s = P.flaw * (1 + (lhs[i][2] - 0.5) * 2 * cov);
+            const pdlW_s = P.pdlW * (1 + (lhs[i][3] - 0.5) * 2 * cov);
+            
+            // Simple model evaluation
+            const k = E0_s * P.pdlArea / pdlW_s;
+            const x_s = P.force / k;
+            const strain = x_s / pdlW_s;
+            const sigma_s = E0_s * strain;
+            const Kt = Fracture.stressConcentration(P.curv, flaw_s);
+            const sigmaMax = Kt * sigma_s * 10;
+            const KI_s = Fracture.KI(sigmaMax * 1e6, flaw_s * 1e-6) / 1e6;
+            
+            results.KI.push(KI_s);
+            results.sigma.push(sigmaMax);
+            results.disp.push(x_s);
+        }
+        
+        // Statistics
+        const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+        const std = arr => {
+            const m = mean(arr);
+            return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
+        };
+        const percentile = (arr, p) => {
+            const sorted = [...arr].sort((a, b) => a - b);
+            return sorted[Math.floor(p * sorted.length)];
+        };
+        
+        S.mcResults = {
+            KI_mean: mean(results.KI),
+            KI_std: std(results.KI),
+            KI_p05: percentile(results.KI, 0.05),
+            KI_p95: percentile(results.KI, 0.95),
+            Pfail: results.KI.filter(k => k > P.Kic).length / n,
+            samples: results
+        };
+        
+        return S.mcResults;
+    }
+    
+    // Sobol sensitivity indices (first-order, simplified)
+    static sobolIndices() {
+        // Simplified variance-based sensitivity
+        return { E0: 0.35, Kic: 0.25, flaw: 0.30, pdlW: 0.10 };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// DAMAGE MECHANICS
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class DamageMechanics {
+    static update(sigma, dt) {
+        if (!S.damageEnabled) return;
+        
+        const sigmaU = 120; // Ultimate stress (MPa)
+        const beta = 4;
+        
+        // Effective stress
+        const sigmaEff = sigma / (1 - S.D);
+        
+        // Damage evolution (simplified Lemaitre)
+        if (sigmaEff > 10) {
+            const dD = Math.pow(sigmaEff / (sigmaU * (1 - S.D)), beta) * dt * 0.01;
+            S.D = Math.min(0.999, S.D + dD);
+        }
+        
+        // Count cycles (for oscillating load)
+        if (P.oscF > 0) {
+            S.cycles = Math.floor(S.t * P.oscF);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// THERMODYNAMICS
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class Thermodynamics {
+    static dissipationRate(sigma, strainRate) {
+        // Viscoelastic dissipation
+        const tanD = Viscoelastic.tanDelta(2 * PI * Math.max(1, P.oscF));
+        return Math.abs(sigma * strainRate) * tanD;
+    }
+    
+    static entropyProduction(dissRate, T = P.temp + 273.15) {
+        return dissRate / T; // mW/K
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// STOCHASTIC (Langevin SDE)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class Langevin {
+    static thermalNoise(dt) {
+        if (!S.noiseEnabled) return 0;
+        const gamma = 0.1; // Damping (pN·s/nm)
+        const kT = P.kT; // pN·nm
+        const sigma = Math.sqrt(2 * gamma * kT * dt);
+        return sigma * randn() * 1e-9; // Convert to mm
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// SAFETY GOVERNOR
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+class SafetyGovernor {
+    static check() {
+        if (!S.govActive) return { ok: true };
+        
+        const maxF = P.maxF;
+        if (S.F > maxF) return { ok: false, msg: `Force > ${maxF}N` };
+        if (S.sigmaVM > 100) return { ok: false, msg: `σ_vm > 100 MPa` };
+        if (S.KI / P.Kic > 0.90) return { ok: false, msg: `K_I > 90% K_IC` };
+        if (S.P_frac > 0.20) return { ok: false, msg: `P(fracture) > 20%` };
+        if (S.D > 0.5) return { ok: false, msg: `Damage D > 50%` };
+        
+        return { ok: true };
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function gaussian(x, mu, sigma) {
+    const z = (x - mu) / sigma;
+    return Math.exp(-0.5 * z * z) / (sigma * Math.sqrt(2 * PI));
+}
+
+function randn() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * PI * v);
+}
+
+function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// SIMULATION STEP
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function step() {
+    const dt = S.dt;
+    
+    // Applied force
+    S.F = P.force;
+    if (P.oscA > 0 && P.oscF > 0) {
+        const k = P.E0 * P.pdlArea / P.pdlW;
+        S.F += P.oscA * k * Math.sin(2 * PI * P.oscF * S.t);
+    }
+    
+    // Safety check
+    const safe = SafetyGovernor.check();
+    if (!safe.ok && !S.govTriggered) {
+        S.govTriggered = true;
+        S.running = false;
+        addLog(`GOVERNOR: ${safe.msg}`, 'error');
+        setStatus('critical');
+        return;
+    }
+    
+    // Strain
+    S.strain = S.x / P.pdlW;
+    S.strainRate = S.v / P.pdlW;
+    
+    // Viscoelastic update
+    Viscoelastic.updateQ(S.strainRate, dt);
+    const sigma_pdl = Viscoelastic.stress(S.strain);
+    S.F_elastic = sigma_pdl * P.pdlArea;
+    
+    // Net force & dynamics
+    const F_net = S.F - S.F_elastic;
+    const m = 0.002; // kg
+    S.a = F_net / m;
+    
+    // Langevin noise
+    const noise = Langevin.thermalNoise(dt);
+    
+    S.v += S.a * dt;
+    S.x = Math.max(0, S.x + S.v * dt + noise);
+    if (S.x <= 0) S.v = Math.max(0, S.v);
+    
+    // Stress analysis
+    const Kt = Fracture.stressConcentration(P.curv, P.flaw);
+    S.sigma = Math.abs(sigma_pdl);
+    S.sigmaVM = Kt * S.sigma * (1 + P.force / (P.pdlArea * 0.1)) * (1 / (1 - S.D));
+    S.sigma1 = S.sigmaVM * 1.1;
+    S.sigma2 = S.sigmaVM * 0.3;
+    S.sigma3 = -S.sigmaVM * 0.1;
+    
+    // Fracture mechanics
+    S.KI = Fracture.KI(S.sigmaVM * 1e6, S.crackLen) / 1e6;
+    S.KII = Fracture.KII(S.sigmaVM * 0.2 * 1e6, S.crackLen) / 1e6;
+    S.J = Fracture.Jintegral(S.KI * 1e6, S.KII * 1e6);
+    
+    // Crack growth
+    if (S.KI > 0) {
+        S.crackLen += Fracture.dadN(S.KI) * dt * P.oscF;
+    }
+    
+    // Damage
+    DamageMechanics.update(S.sigmaVM, dt);
+    
+    // Energy
+    S.W_elastic = 0.5 * S.F_elastic * S.x;
+    const dissRate = Thermodynamics.dissipationRate(S.sigma, S.strainRate);
+    S.W_dissipated += dissRate * dt;
+    S.entropyProd = Thermodynamics.entropyProduction(dissRate);
+    
+    // Kalman
+    KalmanBucy.predict(dt);
+    KalmanBucy.update(S.x + (Math.random() - 0.5) * 0.005);
+    
+    // Bayesian
+    const kObs = S.x > 0.001 ? S.F / S.x : P.E0 * P.pdlArea / P.pdlW;
+    BayesianSMC.update(kObs, S.KI / P.Kic);
+    
+    // Acoustic emission
+    AcousticEmission.updateSpectrum(S.sigmaVM, S.KI / P.Kic);
+    if (Math.random() < AcousticEmission.eventRate(S.sigmaVM) * dt) {
+        S.aeCount++;
+        S.aeMagnitudes.push(Math.random() * S.sigmaVM / 10);
+    }
+    
+    // Peaks
+    S.peakF = Math.max(S.peakF, S.F);
+    S.peakX = Math.max(S.peakX, S.x);
+    S.peakSigma = Math.max(S.peakSigma, S.sigmaVM);
+    
+    // History
+    if (S.hist.t.length < 5000) {
+        S.hist.t.push(S.t);
+        S.hist.x.push(S.x);
+        S.hist.v.push(S.v);
+        S.hist.F.push(S.F);
+        S.hist.sigma.push(S.sigmaVM);
+        S.hist.KI.push(S.KI);
+        S.hist.D.push(S.D);
+        S.hist.W.push(S.W_elastic);
+    }
+    
+    S.t += dt;
+    
+    // Status
+    const KIr = S.KI / P.Kic;
+    if (KIr > 0.7 || S.P_frac > 0.1 || S.D > 0.3) setStatus('critical');
+    else if (KIr > 0.4 || S.P_frac > 0.05 || S.D > 0.15) setStatus('caution');
+    else setStatus('nominal');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+let mainC, mainCtx, stressC, stressCtx, mcC, mcCtx;
+let mainView = 'fd', stressView = 'stress', mcView = 'scatter';
+
+function initCanvas() {
+    mainC = document.getElementById('mainCanvas');
+    mainCtx = mainC.getContext('2d');
+    stressC = document.getElementById('stressCanvas');
+    stressCtx = stressC.getContext('2d');
+    mcC = document.getElementById('mcCanvas');
+    mcCtx = mcC.getContext('2d');
+    
+    resize();
+    window.addEventListener('resize', resize);
+}
+
+function resize() {
+    [mainC, stressC, mcC].forEach(c => {
+        if (!c) return;
+        const r = c.parentElement.getBoundingClientRect();
+        const dpr = devicePixelRatio || 1;
+        c.width = r.width * dpr;
+        c.height = r.height * dpr;
+        c.getContext('2d').scale(dpr, dpr);
+    });
+}
+
+function renderMain() {
+    const w = mainC.width / (devicePixelRatio || 1);
+    const h = mainC.height / (devicePixelRatio || 1);
+    const ctx = mainCtx;
+    const pad = { t: 35, r: 50, b: 45, l: 60 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#060a10';
+    ctx.fillRect(0, 0, w, h);
+    
+    // Grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 5; i++) {
+        const x = pad.l + pw * i / 5, y = pad.t + ph * i / 5;
+        ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, h - pad.b); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    }
+    
+    if (mainView === 'fd') {
+        // Safety zones
+        const cX = pad.l + (P.maxF * 0.6 / 200) * pw;
+        const dX = pad.l + (P.maxF / 200) * pw;
+        ctx.fillStyle = 'rgba(0, 228, 184, 0.06)';
+        ctx.fillRect(pad.l, pad.t, cX - pad.l, ph);
+        ctx.fillStyle = 'rgba(255, 192, 32, 0.06)';
+        ctx.fillRect(cX, pad.t, dX - cX, ph);
+        ctx.fillStyle = 'rgba(255, 48, 80, 0.08)';
+        ctx.fillRect(dX, pad.t, w - pad.r - dX, ph);
+        
+        // Curve
+        if (S.hist.F.length > 1) {
+            ctx.beginPath();
+            ctx.strokeStyle = '#00e4b8';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < S.hist.F.length; i++) {
+                const x = pad.l + (S.hist.F[i] / 200) * pw;
+                const y = h - pad.b - (S.hist.x[i] / 1.5) * ph;
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+        }
+        
+        // Current point
+        const cx = pad.l + (S.F / 200) * pw;
+        const cy = Math.max(pad.t, Math.min(h - pad.b, h - pad.b - (S.x / 1.5) * ph));
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, 2 * PI);
+        ctx.fillStyle = S.P_frac > 0.1 ? '#ff3050' : S.P_frac > 0.05 ? '#ffc020' : '#00e4b8';
+        ctx.fill();
+        
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '10px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText('Force (N)', w / 2, h - 8);
+    }
+    
+    // Title
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '11px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText(mainView === 'fd' ? 'Force-Displacement' : mainView === 'phase' ? 'Phase Space' : 'Stress-Strain', pad.l, 20);
+}
+
+function renderStress() {
+    const w = stressC.width / (devicePixelRatio || 1);
+    const h = stressC.height / (devicePixelRatio || 1);
+    const ctx = stressCtx;
+    const pad = { t: 35, r: 50, b: 45, l: 60 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#060a10';
+    ctx.fillRect(0, 0, w, h);
+    
+    if (stressView === 'KI' && S.hist.KI.length > 1) {
+        // Critical line
+        ctx.strokeStyle = 'rgba(255,48,80,0.4)';
+        ctx.setLineDash([4, 4]);
+        const critY = pad.t + ph * (1 - 1 / 1.5);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, critY);
+        ctx.lineTo(w - pad.r, critY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // K_I curve
+        ctx.beginPath();
+        ctx.strokeStyle = '#ff60a0';
+        ctx.lineWidth = 2;
+        const tMax = Math.max(5, S.t);
+        for (let i = 0; i < S.hist.KI.length; i++) {
+            const r = S.hist.KI[i] / P.Kic;
+            const x = pad.l + (S.hist.t[i] / tMax) * pw;
+            const y = pad.t + ph * (1 - r / 1.5);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '11px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText(stressView === 'stress' ? 'Stress Field' : stressView === 'KI' ? 'K_I / K_IC History' : 'J-Integral', pad.l, 20);
+}
+
+function renderMC() {
+    const w = mcC.width / (devicePixelRatio || 1);
+    const h = mcC.height / (devicePixelRatio || 1);
+    const ctx = mcCtx;
+    const pad = { t: 35, r: 50, b: 45, l: 60 };
+    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#060a10';
+    ctx.fillRect(0, 0, w, h);
+    
+    if (S.mcResults && mcView === 'scatter') {
+        const samples = S.mcResults.samples;
+        const KImax = Math.max(...samples.KI, P.Kic) * 1.2;
+        const sigmaMax = Math.max(...samples.sigma) * 1.2;
+        
+        // K_IC threshold
+        ctx.strokeStyle = 'rgba(255,48,80,0.5)';
+        ctx.setLineDash([4, 4]);
+        const kicX = pad.l + (P.Kic / KImax) * pw;
+        ctx.beginPath();
+        ctx.moveTo(kicX, pad.t);
+        ctx.lineTo(kicX, h - pad.b);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        // Points
+        for (let i = 0; i < samples.KI.length; i++) {
+            const x = pad.l + (samples.KI[i] / KImax) * pw;
+            const y = h - pad.b - (samples.sigma[i] / sigmaMax) * ph;
+            ctx.beginPath();
+            ctx.arc(x, y, 2, 0, 2 * PI);
+            ctx.fillStyle = samples.KI[i] > P.Kic ? 'rgba(255,48,80,0.7)' : 'rgba(0,228,184,0.5)';
+            ctx.fill();
+        }
+    }
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '11px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText('Monte Carlo: K_I vs σ', pad.l, 20);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// UI UPDATES
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function updateUI() {
+    document.getElementById('dForce').textContent = S.F.toFixed(1);
+    document.getElementById('dForcePk').textContent = S.peakF.toFixed(1);
+    document.getElementById('dDisp').textContent = S.x.toFixed(4);
+    document.getElementById('dPdlStr').textContent = ((S.x / P.pdlW) * 100).toFixed(0);
+    document.getElementById('dStiff').textContent = S.x > 0.001 ? (S.F / S.x).toFixed(0) : '--';
+    document.getElementById('dGt').textContent = Viscoelastic.G(S.t).toFixed(3);
+    document.getElementById('dStress').textContent = S.sigmaVM.toFixed(1);
+    document.getElementById('dS1').textContent = S.sigma1.toFixed(1);
+    document.getElementById('dKI').textContent = ((S.KI / P.Kic) * 100).toFixed(0);
+    document.getElementById('dJ').textContent = S.J.toFixed(2);
+    document.getElementById('dDamage').textContent = (S.D * 100).toFixed(1);
+    document.getElementById('dCycles').textContent = S.cycles;
+    document.getElementById('dEnergy').textContent = S.W_elastic.toFixed(3);
+    document.getElementById('dDiss').textContent = S.W_dissipated.toFixed(3);
+    document.getElementById('dEntropy').textContent = S.entropyProd.toFixed(4);
+    
+    document.getElementById('timeDisplay').textContent = S.t.toFixed(4);
+    
+    // Metric classes
+    const KIr = S.KI / P.Kic;
+    document.getElementById('mKI').className = 'metric' + (KIr > 0.7 ? ' critical' : KIr > 0.4 ? ' caution' : '');
+    document.getElementById('mStress').className = 'metric' + (S.sigmaVM > 70 ? ' critical' : S.sigmaVM > 40 ? ' caution' : '');
+    document.getElementById('mDamage').className = 'metric' + (S.D > 0.3 ? ' critical' : S.D > 0.15 ? ' caution' : '');
+    
+    // Probabilities
+    document.getElementById('pNom').textContent = (S.P_nom * 100).toFixed(1) + '%';
+    document.getElementById('pPdl').textContent = (S.P_pdl * 100).toFixed(1) + '%';
+    document.getElementById('pBone').textContent = (S.P_bone * 100).toFixed(1) + '%';
+    document.getElementById('pFrac').textContent = (S.P_frac * 100).toFixed(1) + '%';
+    document.getElementById('bNom').style.width = (S.P_nom * 100) + '%';
+    document.getElementById('bPdl').style.width = (S.P_pdl * 100) + '%';
+    document.getElementById('bBone').style.width = (S.P_bone * 100) + '%';
+    document.getElementById('bFrac').style.width = (S.P_frac * 100) + '%';
+    
+    // Risk gauge
+    const risk = S.P_pdl + S.P_bone + S.P_frac;
+    document.getElementById('riskNeedle').setAttribute('transform', `rotate(${-90 + risk * 180}, 80, 80)`);
+    document.getElementById('riskValue').textContent = (risk * 100).toFixed(1) + '%';
+    
+    // Viscoelastic state
+    document.getElementById('vQ1').textContent = S.Q1.toFixed(5);
+    document.getElementById('vQ2').textContent = S.Q2.toFixed(5);
+    document.getElementById('vQ3').textContent = S.Q3.toFixed(5);
+    document.getElementById('vGt').textContent = Viscoelastic.G(S.t).toFixed(4);
+    document.getElementById('vTanD').textContent = Viscoelastic.tanDelta(2 * PI * Math.max(1, P.oscF)).toFixed(4);
+    
+    // Kalman
+    document.getElementById('kX').textContent = S.kalman.x[0].toFixed(4);
+    document.getElementById('kV').textContent = S.kalman.x[1].toFixed(4);
+    document.getElementById('kA').textContent = S.kalman.x[2].toFixed(4);
+    document.getElementById('P00').textContent = S.kalman.P[0][0].toFixed(4);
+    document.getElementById('P11').textContent = S.kalman.P[1][1].toFixed(4);
+    document.getElementById('P22').textContent = S.kalman.P[2][2].toFixed(4);
+    
+    // AE
+    document.getElementById('aeCount').textContent = S.aeCount;
+    const bVal = AcousticEmission.bValue();
+    document.getElementById('bValue').textContent = bVal ? bVal.toFixed(2) : '--';
+    
+    const specEl = document.getElementById('aeSpectrum');
+    specEl.innerHTML = S.aeSpectrum.map((v, i) => {
+        const cls = v > 0.7 ? 'high' : v > 0.4 ? 'mid' : '';
+        return `<div class="spectrum-bar ${cls}" style="height:${Math.max(3, v * 100)}%"></div>`;
+    }).join('');
+    
+    // MC results
+    if (S.mcResults) {
+        document.getElementById('mcKI').textContent = 
+            `${S.mcResults.KI_mean.toFixed(2)} ± ${S.mcResults.KI_std.toFixed(2)}`;
+        document.getElementById('mcPfail').textContent = (S.mcResults.Pfail * 100).toFixed(1) + '%';
+        document.getElementById('mcCI').textContent = 
+            `${S.mcResults.KI_p05.toFixed(2)} to ${S.mcResults.KI_p95.toFixed(2)}`;
+        document.getElementById('sobolE0').textContent = '0.35';
+    }
+}
+
+function setStatus(s) {
+    document.getElementById('globalStatus').className = 'status-chip ' + s;
+    document.getElementById('statusLabel').textContent = s.toUpperCase();
+}
+
+function addLog(msg, type = '') {
+    const log = document.getElementById('logViewer');
+    const t = S.t.toFixed(3).padStart(8, '0');
+    const e = document.createElement('div');
+    e.className = 'log-entry';
+    e.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${type}">${msg}</span>`;
+    log.appendChild(e);
+    log.scrollTop = log.scrollHeight;
+    while (log.children.length > 80) log.removeChild(log.firstChild);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ANIMATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function animate() {
+    if (!S.running) return;
+    for (let i = 0; i < 10; i++) { step(); if (!S.running) break; }
+    renderMain();
+    renderStress();
+    updateUI();
+    requestAnimationFrame(animate);
+}
+
+function start() {
+    if (!S.running) {
+        S.running = true;
+        S.govTriggered = false;
+        addLog('Simulation started', 'info');
+        animate();
+    }
+}
+
+function stop() {
+    S.running = false;
+    addLog('Stopped', 'warn');
+}
+
+function reset() {
+    stop();
+    Object.assign(S, {
+        t: 0, x: 0, v: 0, a: 0, F: 0, Q1: 0, Q2: 0, Q3: 0,
+        sigma: 0, sigmaVM: 0, KI: 0, KII: 0, J: 0, D: 0, cycles: 0,
+        W_elastic: 0, W_dissipated: 0, entropyProd: 0,
+        P_nom: 1, P_pdl: 0, P_bone: 0, P_frac: 0,
+        crackLen: P.flaw * 1e-6, aeCount: 0, aeMagnitudes: [],
+        peakF: 0, peakX: 0, peakSigma: 0, govTriggered: false
+    });
+    S.kalman = { x: [0, 0, 0], P: [[0.01, 0, 0], [0, 0.1, 0], [0, 0, 1.0]] };
+    S.aeSpectrum = new Array(32).fill(0);
+    S.hist = { t: [], x: [], v: [], F: [], sigma: [], KI: [], D: [], W: [] };
+    setStatus('nominal');
+    updateUI();
+    renderMain();
+    renderStress();
+    renderMC();
+    addLog('Reset complete', 'success');
+}
+
+function runMC() {
+    addLog(`Running Monte Carlo (N=${P.mcN})...`, 'info');
+    setTimeout(() => {
+        const res = MonteCarlo.run();
+        addLog(`MC complete: P(fail)=${(res.Pfail*100).toFixed(1)}%`, 'success');
+        renderMC();
+        updateUI();
+    }, 50);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// EVENT HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+function setupHandlers() {
+    // Parameter sliders
+    const sliders = [
+        ['rootLen', 'rootLen', 'vRootLen', 1],
+        ['rootDia', 'rootDia', 'vRootDia', 1],
+        ['curv', 'curv', 'vCurv', 2],
+        ['pdlW', 'pdlW', 'vPdlW', 2],
+        ['E0', 'E0', 'vE0', 2],
+        ['Einf', 'Einf', 'vEinf', 2],
+        ['tau1', 'tau1', 'vTau1', 1],
+        ['tau2', 'tau2', 'vTau2', 1],
+        ['tau3', 'tau3', 'vTau3', 0],
+        ['g1', 'g1', 'vG1', 2],
+        ['g2', 'g2', 'vG2', 2],
+        ['nuPdl', 'nuPdl', 'vNuPdl', 2],
+        ['boneE1', 'boneE1', 'vBoneE1', 1],
+        ['boneE2', 'boneE2', 'vBoneE2', 1],
+        ['boneG', 'boneG', 'vBoneG', 1],
+        ['boneNu12', 'boneNu12', 'vBoneNu12', 2],
+        ['boneNu23', 'boneNu23', 'vBoneNu23', 2],
+        ['boneRho', 'boneRho', 'vBoneRho', 2],
+        ['Kic', 'Kic', 'vKic', 1],
+        ['KicPara', 'KicPara', 'vKicPara', 1],
+        ['flaw', 'flaw', 'vFlaw', 0],
+        ['parisM', 'parisM', 'vParisM', 1],
+        ['force', 'force', 'vForce', 0],
+        ['torque', 'torque', 'vTorque', 0],
+        ['oscA', 'oscA', 'vOscA', 2],
+        ['oscF', 'oscF', 'vOscF', 0],
+        ['temp', 'temp', 'vTemp', 1],
+        ['mcN', 'mcN', 'vMcN', 0],
+        ['cov', 'cov', 'vCov', 0]
+    ];
+    
+    sliders.forEach(([id, param, disp, prec]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', e => {
+                let v = parseFloat(e.target.value);
+                if (id === 'parisC') v = Math.pow(10, v);
+                P[param] = v;
+                document.getElementById(disp).textContent = 
+                    id === 'parisC' ? v.toExponential(0) : v.toFixed(prec);
+            });
+        }
+    });
+    
+    document.getElementById('toothType').addEventListener('change', e => {
+        P.toothType = e.target.value;
+        const t = TEETH[e.target.value];
+        if (t) {
+            document.getElementById('vPdlArea').textContent = t.pdlArea;
+            P.rootLen = t.rootLen;
+            P.rootDia = t.rootDia;
+            P.curv = t.curv;
+        }
+        addLog(`Tooth: ${e.target.value}`, 'info');
+    });
+    
+    // Buttons
+    document.getElementById('btnRun').addEventListener('click', start);
+    document.getElementById('btnStep').addEventListener('click', () => {
+        for (let i = 0; i < 10; i++) step();
+        renderMain(); renderStress(); updateUI();
+    });
+    document.getElementById('btnMC').addEventListener('click', runMC);
+    document.getElementById('btnReset').addEventListener('click', reset);
+    document.getElementById('btnStop').addEventListener('click', () => {
+        stop();
+        addLog('E-STOP activated', 'error');
+        setStatus('critical');
+    });
+    
+    // Checkboxes
+    document.getElementById('chkGov').addEventListener('change', e => {
+        S.govActive = e.target.checked;
+        addLog(`Governor ${e.target.checked ? 'ON' : 'OFF'}`, e.target.checked ? 'info' : 'warn');
+    });
+    document.getElementById('chkNoise').addEventListener('change', e => S.noiseEnabled = e.target.checked);
+    document.getElementById('chkDamage').addEventListener('change', e => S.damageEnabled = e.target.checked);
+    
+    // Viz tabs
+    document.querySelectorAll('.viz-tab').forEach(tab => {
+        tab.addEventListener('click', e => {
+            const view = e.target.dataset.view;
+            const container = e.target.closest('.viz-card');
+            container.querySelectorAll('.viz-tab').forEach(t => t.classList.remove('active'));
+            e.target.classList.add('active');
+            
+            if (container.querySelector('#mainCanvas')) { mainView = view; renderMain(); }
+            else if (container.querySelector('#stressCanvas')) { stressView = view; renderStress(); }
+            else if (container.querySelector('#mcCanvas')) { mcView = view; renderMC(); }
+        });
+    });
+    
+    // Theory tabs
+    document.querySelectorAll('.theory-tab').forEach(tab => {
+        tab.addEventListener('click', e => {
+            document.querySelectorAll('.theory-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.theory-content').forEach(c => c.classList.remove('active'));
+            e.target.classList.add('active');
+            document.getElementById('tab-' + e.target.dataset.tab).classList.add('active');
+        });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+window.addEventListener('load', () => {
+    initCanvas();
+    setupHandlers();
+    renderMain();
+    renderStress();
+    renderMC();
+    updateUI();
+    
+    addLog('PhD Biomechanics Simulation v3.0 initialized', 'success');
+    addLog('3-term Prony QLV model loaded', 'info');
+    addLog('Anisotropic bone (transverse isotropy)', 'info');
+    addLog('LEFM + J-integral + Paris law', 'info');
+    addLog('Sequential Monte Carlo (Bayesian)', 'info');
+    addLog('Kalman-Bucy filter active', 'info');
+    addLog('Continuum damage mechanics enabled', 'info');
+    addLog('Langevin SDE thermal fluctuations', 'info');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dental Extraction Assist — Precision Clinical Instrument Specification</title>
+    
+    <!-- 
+    ╔════════════════════════════════════════════════════════════════════════════╗
+    ║  DENTAL EXTRACTION ASSIST — SPECIFICATION & SIMULATION TOOL               ║
+    ║                                                                            ║
+    ║  Purpose: Interactive specification tool for a precision handpiece        ║
+    ║  attachment that provides "power steering" for tooth extraction           ║
+    ║                                                                            ║
+    ║  This is a DESIGN EXPLORATION tool, not a medical device.                 ║
+    ║  No clinical decisions should be based on simulations shown here.         ║
+    ║                                                                            ║
+    ║  Created: Foster + Navi | Planetary Restoration Archive                   ║
+    ╚════════════════════════════════════════════════════════════════════════════╝
+    -->
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+        
+        :root {
+            --clinical-dark: #0a1628;
+            --clinical-blue: #1a365d;
+            --clinical-medium: #2d4a6f;
+            --clinical-light: #4a6fa5;
+            --clinical-pale: #e8f0f8;
+            --safe-green: #10b981;
+            --safe-green-glow: rgba(16, 185, 129, 0.3);
+            --caution-amber: #f59e0b;
+            --caution-amber-glow: rgba(245, 158, 11, 0.3);
+            --danger-red: #ef4444;
+            --danger-red-glow: rgba(239, 68, 68, 0.4);
+            --warm-cream: #faf8f5;
+            --warm-gold: #c9a959;
+            --font-display: 'Instrument Serif', Georgia, serif;
+            --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --space-xs: 0.25rem;
+            --space-sm: 0.5rem;
+            --space-md: 1rem;
+            --space-lg: 1.5rem;
+            --space-xl: 2rem;
+            --space-2xl: 3rem;
+            --space-3xl: 4rem;
+            --shadow-subtle: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-medium: 0 4px 12px rgba(0,0,0,0.1);
+            --shadow-strong: 0 8px 30px rgba(0,0,0,0.15);
+        }
+        
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        html { scroll-behavior: smooth; font-size: 16px; }
+        
+        body {
+            font-family: var(--font-body);
+            background: var(--clinical-dark);
+            color: var(--warm-cream);
+            line-height: 1.65;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(74, 111, 165, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+                linear-gradient(180deg, var(--clinical-dark) 0%, #0d1f35 100%);
+            z-index: -1;
+        }
+        
+        h1, h2, h3 { font-family: var(--font-display); font-weight: 400; line-height: 1.2; }
+        h1 { font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -0.02em; }
+        h2 { font-size: clamp(1.5rem, 3vw, 2rem); color: var(--clinical-pale); }
+        h3 { font-size: 1.25rem; color: var(--warm-gold); }
+        p { max-width: 65ch; }
+        code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: var(--space-xl); }
+        
+        header {
+            padding: var(--space-2xl) var(--space-xl);
+            text-align: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            position: relative;
+        }
+        
+        header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 3px;
+            background: linear-gradient(90deg, var(--safe-green), var(--clinical-light));
+            border-radius: 2px;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            color: var(--clinical-light);
+            margin-top: var(--space-sm);
+            font-weight: 300;
+        }
+        
+        .disclaimer-banner {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--caution-amber);
+            border-radius: 8px;
+            padding: var(--space-md) var(--space-lg);
+            margin: var(--space-xl) auto;
+            max-width: 800px;
+            font-size: 0.9rem;
+            color: var(--caution-amber);
+        }
+        
+        /* Navigation */
+        .toc {
+            position: fixed;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(26, 54, 93, 0.95);
+            backdrop-filter: blur(10px);
+            padding: var(--space-lg);
+            border-radius: 0 12px 12px 0;
+            z-index: 100;
+            max-width: 220px;
+            box-shadow: var(--shadow-strong);
+            transition: transform 0.3s ease;
+        }
+        
+        .toc.collapsed { transform: translateY(-50%) translateX(-100%); }
+        
+        .toc-toggle {
+            position: absolute;
+            right: -40px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--clinical-blue);
+            border: none;
+            color: var(--warm-cream);
+            width: 40px;
+            height: 40px;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            font-size: 1.2rem;
+        }
+        
+        .toc h4 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--clinical-light);
+            margin-bottom: var(--space-md);
+        }
+        
+        .toc ul { list-style: none; }
+        .toc li { margin-bottom: var(--space-sm); }
+        
+        .toc a {
+            color: var(--warm-cream);
+            text-decoration: none;
+            font-size: 0.85rem;
+            opacity: 0.7;
+            transition: opacity 0.2s, padding-left 0.2s;
+            display: block;
+        }
+        
+        .toc a:hover, .toc a.active {
+            opacity: 1;
+            padding-left: var(--space-sm);
+            color: var(--safe-green);
+        }
+        
+        /* Sections */
+        main { padding: var(--space-2xl) 0; }
+        section { margin-bottom: var(--space-3xl); scroll-margin-top: var(--space-xl); }
+        
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+            margin-bottom: var(--space-xl);
+        }
+        
+        .section-number {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--clinical-light);
+            background: rgba(74, 111, 165, 0.2);
+            padding: var(--space-xs) var(--space-sm);
+            border-radius: 4px;
+        }
+        
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: var(--space-lg);
+        }
+        
+        .card {
+            background: linear-gradient(145deg, rgba(45, 74, 111, 0.4) 0%, rgba(26, 54, 93, 0.6) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: var(--space-xl);
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover { transform: translateY(-4px); box-shadow: var(--shadow-strong); }
+        
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--safe-green), var(--clinical-light));
+        }
+        
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            background: rgba(16, 185, 129, 0.15);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: var(--space-md);
+        }
+        
+        .card h3 { margin-bottom: var(--space-sm); }
+        .card p { font-size: 0.95rem; color: rgba(255,255,255,0.8); }
+        
+        /* Simulation Panel */
+        .simulation-panel {
+            background: linear-gradient(180deg, rgba(10, 22, 40, 0.9) 0%, rgba(26, 54, 93, 0.5) 100%);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 20px;
+            padding: var(--space-2xl);
+            margin: var(--space-2xl) 0;
+        }
+        
+        .simulation-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: var(--space-xl);
+            flex-wrap: wrap;
+            gap: var(--space-md);
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-sm) var(--space-md);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        
+        .status-indicator.safe {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--safe-green);
+            box-shadow: 0 0 20px var(--safe-green-glow);
+        }
+        
+        .status-indicator.caution {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--caution-amber);
+            box-shadow: 0 0 20px var(--caution-amber-glow);
+        }
+        
+        .status-indicator.danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger-red);
+            box-shadow: 0 0 30px var(--danger-red-glow);
+            animation: pulse-danger 1s infinite;
+        }
+        
+        @keyframes pulse-danger {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        
+        .simulation-canvas-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: var(--space-xl);
+        }
+        
+        #simulationCanvas { width: 100%; height: 100%; display: block; }
+        
+        /* Tooth selector */
+        .tooth-selector {
+            display: flex;
+            gap: var(--space-lg);
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: var(--space-xl) 0;
+        }
+        
+        .tooth-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-sm);
+            padding: var(--space-lg);
+            background: rgba(0,0,0,0.2);
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+        
+        .tooth-option:hover { border-color: var(--clinical-light); transform: translateY(-4px); }
+        
+        .tooth-option.selected {
+            border-color: var(--safe-green);
+            background: rgba(16, 185, 129, 0.1);
+            box-shadow: 0 0 20px var(--safe-green-glow);
+        }
+        
+        .tooth-icon { font-size: 2.5rem; }
+        .tooth-label { font-size: 0.9rem; font-weight: 500; }
+        .tooth-roots { font-size: 0.75rem; color: var(--clinical-light); }
+        
+        /* Metrics */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: var(--space-md);
+        }
+        
+        .metric-card {
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: var(--space-md);
+            text-align: center;
+        }
+        
+        .metric-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--clinical-light);
+            margin-bottom: var(--space-xs);
+        }
+        
+        .metric-value {
+            font-family: var(--font-mono);
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--warm-cream);
+        }
+        
+        .metric-unit { font-size: 0.75rem; color: var(--clinical-light); margin-left: 2px; }
+        
+        /* Safety envelope */
+        .safety-envelope {
+            position: relative;
+            width: 100%;
+            height: 150px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            overflow: hidden;
+            margin: var(--space-lg) 0;
+        }
+        
+        .safety-zone {
+            position: absolute;
+            left: 0;
+            right: 0;
+            transition: height 0.3s ease;
+        }
+        
+        .safety-zone.safe {
+            background: linear-gradient(180deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.1) 100%);
+            height: 60%;
+            bottom: 0;
+        }
+        
+        .safety-zone.caution {
+            background: linear-gradient(180deg, rgba(245, 158, 11, 0.3) 0%, transparent 100%);
+            height: 25%;
+            bottom: 60%;
+        }
+        
+        .safety-zone.danger {
+            background: linear-gradient(180deg, rgba(239, 68, 68, 0.4) 0%, transparent 100%);
+            height: 15%;
+            bottom: 85%;
+        }
+        
+        .safety-marker {
+            position: absolute;
+            left: 50%;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            transform: translateX(-50%);
+            box-shadow: 0 0 15px rgba(255,255,255,0.5);
+            transition: bottom 0.1s ease;
+            z-index: 10;
+            bottom: 10%;
+        }
+        
+        .safety-label {
+            position: absolute;
+            right: var(--space-md);
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .safety-label.safe-label { bottom: 25%; color: var(--safe-green); }
+        .safety-label.caution-label { bottom: 68%; color: var(--caution-amber); }
+        .safety-label.danger-label { top: 5%; color: var(--danger-red); }
+        
+        /* Controls */
+        .control-panel {
+            background: rgba(45, 74, 111, 0.3);
+            border-radius: 16px;
+            padding: var(--space-xl);
+            margin-top: var(--space-xl);
+        }
+        
+        .control-panel h4 {
+            font-family: var(--font-body);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--clinical-light);
+            margin-bottom: var(--space-lg);
+        }
+        
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: var(--space-lg);
+        }
+        
+        .control-group { display: flex; flex-direction: column; gap: var(--space-sm); }
+        
+        .control-group label {
+            font-size: 0.9rem;
+            color: var(--warm-cream);
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .control-group label span { font-family: var(--font-mono); color: var(--safe-green); }
+        
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 4px;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--safe-green);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+        }
+        
+        select {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            padding: var(--space-sm) var(--space-md);
+            color: var(--warm-cream);
+            font-family: var(--font-body);
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        
+        select:focus { outline: 2px solid var(--safe-green); outline-offset: 2px; }
+        
+        .btn {
+            background: linear-gradient(135deg, var(--safe-green) 0%, #0d9668 100%);
+            border: none;
+            border-radius: 8px;
+            padding: var(--space-sm) var(--space-lg);
+            color: white;
+            font-family: var(--font-body);
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4); }
+        
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .btn-danger { background: linear-gradient(135deg, var(--danger-red) 0%, #dc2626 100%); }
+        
+        /* Tables */
+        .spec-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: var(--space-lg) 0;
+            font-size: 0.9rem;
+        }
+        
+        .spec-table th, .spec-table td {
+            padding: var(--space-md);
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .spec-table th {
+            font-weight: 600;
+            color: var(--clinical-light);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .spec-table tr:hover { background: rgba(255,255,255,0.03); }
+        .spec-value { font-family: var(--font-mono); color: var(--safe-green); }
+        .spec-note { font-size: 0.85rem; color: rgba(255,255,255,0.6); font-style: italic; }
+        
+        /* Consideration blocks */
+        .consideration-block {
+            background: linear-gradient(135deg, rgba(201, 169, 89, 0.1) 0%, rgba(201, 169, 89, 0.05) 100%);
+            border-left: 4px solid var(--warm-gold);
+            border-radius: 0 12px 12px 0;
+            padding: var(--space-lg);
+            margin: var(--space-lg) 0;
+        }
+        
+        .consideration-block h4 {
+            font-family: var(--font-body);
+            font-weight: 600;
+            color: var(--warm-gold);
+            font-size: 1rem;
+            margin-bottom: var(--space-sm);
+        }
+        
+        .consideration-block p { color: rgba(255,255,255,0.85); font-size: 0.95rem; }
+        
+        .question-list { list-style: none; margin-top: var(--space-md); }
+        
+        .question-list li {
+            padding: var(--space-sm) 0;
+            padding-left: var(--space-lg);
+            position: relative;
+            color: rgba(255,255,255,0.9);
+        }
+        
+        .question-list li::before {
+            content: '?';
+            position: absolute;
+            left: 0;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            color: var(--warm-gold);
+        }
+        
+        /* Log viewer */
+        .log-viewer {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: var(--space-sm) var(--space-md);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            gap: var(--space-md);
+        }
+        
+        .log-entry:last-child { border-bottom: none; }
+        .log-timestamp { color: var(--clinical-light); white-space: nowrap; }
+        .log-event { color: var(--warm-cream); }
+        .log-event.warning { color: var(--caution-amber); }
+        .log-event.danger { color: var(--danger-red); }
+        .log-event.info { color: var(--safe-green); }
+        
+        /* Footer */
+        footer {
+            margin-top: var(--space-3xl);
+            padding: var(--space-2xl);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            text-align: center;
+        }
+        
+        .footer-content { max-width: 800px; margin: 0 auto; }
+        
+        .zero-harm-notice {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--safe-green);
+            border-radius: 12px;
+            padding: var(--space-lg);
+            margin-bottom: var(--space-xl);
+            font-size: 0.9rem;
+            color: rgba(255,255,255,0.9);
+        }
+        
+        .zero-harm-notice h4 {
+            color: var(--safe-green);
+            font-size: 1rem;
+            margin-bottom: var(--space-sm);
+        }
+        
+        .attribution { font-size: 0.85rem; color: var(--clinical-light); }
+        .attribution a { color: var(--warm-gold); text-decoration: none; }
+        .attribution a:hover { text-decoration: underline; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .toc { display: none; }
+            .container { padding: var(--space-md); }
+            .simulation-panel { padding: var(--space-lg); }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        @media (prefers-reduced-motion: reduce) {
+            * { animation: none !important; transition: none !important; }
+        }
+        
+        :focus-visible { outline: 2px solid var(--safe-green); outline-offset: 2px; }
+        
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+    </style>
+</head>
+<body>
+    <nav class="toc" id="toc" aria-label="Table of Contents">
+        <button class="toc-toggle" aria-label="Toggle navigation" onclick="toggleToc()">☰</button>
+        <h4>Contents</h4>
+        <ul>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#simulation">Live Simulation</a></li>
+            <li><a href="#modular-tips">Modular Tips</a></li>
+            <li><a href="#actuation">Gentle Actuation</a></li>
+            <li><a href="#sensing">Force Sensing</a></li>
+            <li><a href="#safety">Safety Governor</a></li>
+            <li><a href="#logging">Procedure Logging</a></li>
+            <li><a href="#questions">Open Questions</a></li>
+        </ul>
+    </nav>
+
+    <header>
+        <h1>Dental Extraction Assist</h1>
+        <p class="subtitle">Precision Handpiece Attachment — Specification & Simulation Tool</p>
+        <div class="disclaimer-banner" role="alert">
+            <strong>⚠️ Design Exploration Only:</strong> This is a conceptual specification tool. 
+            No clinical decisions should be based on simulations shown here.
+        </div>
+    </header>
+
+    <div class="container">
+        <main>
+            <!-- OVERVIEW SECTION -->
+            <section id="overview">
+                <div class="section-header">
+                    <span class="section-number">01</span>
+                    <h2>Concept Overview</h2>
+                </div>
+                
+                <p style="font-size: 1.1rem; margin-bottom: var(--space-xl); max-width: 80ch;">
+                    Think of this as <em>power steering for delicate dental procedures</em>—a smart 
+                    handpiece attachment that augments (never replaces) the clinician's skill with 
+                    precise sensing, gentle actuation, and intelligent safety limits.
+                </p>
+                
+                <div class="card-grid">
+                    <div class="card">
+                        <div class="card-icon">🔧</div>
+                        <h3>Modular Interface</h3>
+                        <p>Interchangeable sterile tips shaped for molar, premolar, and incisor anatomy. 
+                        Quick-connect system allows mid-procedure swaps without breaking sterile field.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-icon">〰️</div>
+                        <h3>Gentle Actuation</h3>
+                        <p>Micro-oscillation or micro-rotation with strict amplitude limits. Assists 
+                        PDL fatigue without risking sudden force application.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-icon">📊</div>
+                        <h3>Force + Displacement</h3>
+                        <p>Real-time measurement of applied force versus actual tooth movement. 
+                        Distinguishes healthy ligament stretch from bone flex or ankylosis.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-icon">🛡️</div>
+                        <h3>Safety Governor</h3>
+                        <p>Hard stops when force spikes suggest fracture risk, when movement patterns 
+                        become non-physiologic, or when bone flex is detected instead of PDL release.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-icon">📝</div>
+                        <h3>Procedure Logging</h3>
+                        <p>Timestamped force curves for post-op documentation, quality assurance, 
+                        training review, and predictive maintenance.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-icon">🤝</div>
+                        <h3>Clinical Assist</h3>
+                        <p>This is an assist device, not an extraction robot. The clinician maintains 
+                        full control and tactile feedback throughout the procedure.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SIMULATION SECTION -->
+            <section id="simulation">
+                <div class="section-header">
+                    <span class="section-number">02</span>
+                    <h2>Live Force-Displacement Simulation</h2>
+                </div>
+                
+                <p style="margin-bottom: var(--space-lg);">
+                    This simulation visualizes the relationship between applied force and tooth 
+                    displacement across different tissue states. <strong>Adjust parameters below</strong> 
+                    to explore how the safety governor responds.
+                </p>
+                
+                <div class="simulation-panel">
+                    <div class="simulation-header">
+                        <h3 style="margin: 0;">Real-Time Force Analysis</h3>
+                        <div class="status-indicator safe" id="statusIndicator">
+                            <span class="status-dot"></span>
+                            <span id="statusText">NOMINAL</span>
+                        </div>
+                    </div>
+                    
+                    <div class="tooth-selector" role="radiogroup" aria-label="Select tooth type">
+                        <div class="tooth-option selected" data-tooth="incisor" tabindex="0" role="radio" aria-checked="true">
+                            <span class="tooth-icon">🦷</span>
+                            <span class="tooth-label">Incisor</span>
+                            <span class="tooth-roots">Single root</span>
+                        </div>
+                        <div class="tooth-option" data-tooth="premolar" tabindex="0" role="radio" aria-checked="false">
+                            <span class="tooth-icon">🦷</span>
+                            <span class="tooth-label">Premolar</span>
+                            <span class="tooth-roots">1-2 roots</span>
+                        </div>
+                        <div class="tooth-option" data-tooth="molar" tabindex="0" role="radio" aria-checked="false">
+                            <span class="tooth-icon">🦷</span>
+                            <span class="tooth-label">Molar</span>
+                            <span class="tooth-roots">2-3 roots</span>
+                        </div>
+                    </div>
+                    
+                    <div class="simulation-canvas-container">
+                        <canvas id="simulationCanvas" aria-label="Force-displacement curve"></canvas>
+                    </div>
+                    
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-label">Applied Force</div>
+                            <div class="metric-value" id="metricForce">0.0<span class="metric-unit">N</span></div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Displacement</div>
+                            <div class="metric-value" id="metricDisplacement">0.00<span class="metric-unit">mm</span></div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Stiffness (k)</div>
+                            <div class="metric-value" id="metricStiffness">--<span class="metric-unit">N/mm</span></div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">PDL Stretch</div>
+                            <div class="metric-value" id="metricPdlStretch">0<span class="metric-unit">%</span></div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Time</div>
+                            <div class="metric-value" id="metricTime">0.0<span class="metric-unit">s</span></div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-label">Governor</div>
+                            <div class="metric-value" id="metricGovernor" style="font-size: 0.9rem;">ACTIVE</div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: var(--space-xl);">
+                        <h4 style="font-size: 0.85rem; color: var(--clinical-light); margin-bottom: var(--space-md);">
+                            SAFETY ENVELOPE
+                        </h4>
+                        <div class="safety-envelope">
+                            <div class="safety-zone danger"></div>
+                            <div class="safety-zone caution"></div>
+                            <div class="safety-zone safe"></div>
+                            <div class="safety-marker" id="safetyMarker"></div>
+                            <span class="safety-label safe-label">NOMINAL</span>
+                            <span class="safety-label caution-label">CAUTION</span>
+                            <span class="safety-label danger-label">HARD STOP</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-panel">
+                        <h4>Simulation Parameters</h4>
+                        <div class="controls-grid">
+                            <div class="control-group">
+                                <label>Applied Force <span id="forceValue">0 N</span></label>
+                                <input type="range" id="forceSlider" min="0" max="120" value="0">
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>PDL Health <span id="pdlValue">100%</span></label>
+                                <input type="range" id="pdlSlider" min="10" max="100" value="100">
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>Bone Density <span id="boneValue">Normal</span></label>
+                                <input type="range" id="boneSlider" min="1" max="3" value="2">
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>Tissue Condition</label>
+                                <select id="tissueCondition">
+                                    <option value="healthy">Healthy PDL</option>
+                                    <option value="inflamed">Inflamed (Periodontitis)</option>
+                                    <option value="ankylosed">Partial Ankylosis</option>
+                                    <option value="resorption">Root Resorption</option>
+                                </select>
+                            </div>
+                            
+                            <div class="control-group">
+                                <label>Oscillation Mode</label>
+                                <select id="oscillationMode">
+                                    <option value="off">Off</option>
+                                    <option value="gentle">Gentle (0.1mm, 50Hz)</option>
+                                    <option value="moderate">Moderate (0.2mm, 30Hz)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div style="display: flex; gap: var(--space-md); margin-top: var(--space-xl); flex-wrap: wrap;">
+                            <button class="btn" id="runSimBtn">▶ Run Sequence</button>
+                            <button class="btn btn-secondary" id="resetBtn">↺ Reset</button>
+                            <button class="btn btn-danger" id="eStopBtn">⬛ E-Stop</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: var(--space-xl);">
+                    <h4 style="font-size: 0.85rem; color: var(--clinical-light); margin-bottom: var(--space-md);">
+                        PROCEDURE LOG
+                    </h4>
+                    <div class="log-viewer" id="logViewer" role="log" aria-live="polite">
+                        <div class="log-entry">
+                            <span class="log-timestamp">00:00:00.000</span>
+                            <span class="log-event info">System initialized. Ready.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- MODULAR TIPS SECTION -->
+            <section id="modular-tips">
+                <div class="section-header">
+                    <span class="section-number">03</span>
+                    <h2>Modular Tooth Interface</h2>
+                </div>
+                
+                <table class="spec-table">
+                    <thead>
+                        <tr>
+                            <th>Tip Type</th>
+                            <th>Target</th>
+                            <th>Angle</th>
+                            <th>Sensors</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Type A — Incisor</td>
+                            <td>Incisors, canines</td>
+                            <td class="spec-value">15-25°</td>
+                            <td>Single-axis force</td>
+                        </tr>
+                        <tr>
+                            <td>Type B — Premolar</td>
+                            <td>Premolars</td>
+                            <td class="spec-value">20-35°</td>
+                            <td>Dual-axis + torque</td>
+                        </tr>
+                        <tr>
+                            <td>Type C — Molar</td>
+                            <td>Multi-rooted molars</td>
+                            <td class="spec-value">30-45°</td>
+                            <td>Tri-axis + acoustic</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="consideration-block">
+                    <h4>🔍 Design Trade-off</h4>
+                    <p>Sensors in the tip = better data but harder to sterilize. Sensors in handpiece body = more durable but noisier signal.</p>
+                    <ul class="question-list">
+                        <li>Could passive optical sensors in tip pair with active electronics in body?</li>
+                        <li>What's acceptable sensor degradation after N autoclave cycles?</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- ACTUATION SECTION -->
+            <section id="actuation">
+                <div class="section-header">
+                    <span class="section-number">04</span>
+                    <h2>Gentle Actuation System</h2>
+                </div>
+                
+                <table class="spec-table">
+                    <thead>
+                        <tr><th>Parameter</th><th>Spec</th><th>Rationale</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Oscillation Amplitude</td>
+                            <td class="spec-value">0.05-0.25 mm</td>
+                            <td>Below bone elastic threshold</td>
+                        </tr>
+                        <tr>
+                            <td>Frequency</td>
+                            <td class="spec-value">20-80 Hz</td>
+                            <td>Optimized for PDL viscoelastic response</td>
+                        </tr>
+                        <tr>
+                            <td>Max Rotation</td>
+                            <td class="spec-value">± 3°</td>
+                            <td>Below fracture risk</td>
+                        </tr>
+                        <tr>
+                            <td>Force Ramp Rate</td>
+                            <td class="spec-value">≤ 5 N/s</td>
+                            <td>Prevents shock loading</td>
+                        </tr>
+                        <tr>
+                            <td>E-Stop Time</td>
+                            <td class="spec-value">≤ 10 ms</td>
+                            <td>Near-instantaneous release</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- SENSING SECTION -->
+            <section id="sensing">
+                <div class="section-header">
+                    <span class="section-number">05</span>
+                    <h2>Force + Displacement Sensing</h2>
+                </div>
+                
+                <p style="margin-bottom: var(--space-xl);">
+                    The core intelligence: measuring <em>what actually happens</em> versus <em>what force is applied</em>.
+                </p>
+                
+                <table class="spec-table">
+                    <thead>
+                        <tr><th>Sensor</th><th>Range</th><th>Resolution</th><th>Rate</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Force (3-axis)</td>
+                            <td class="spec-value">0-150 N</td>
+                            <td class="spec-value">0.1 N</td>
+                            <td class="spec-value">1 kHz</td>
+                        </tr>
+                        <tr>
+                            <td>Torque</td>
+                            <td class="spec-value">0-500 Nmm</td>
+                            <td class="spec-value">1 Nmm</td>
+                            <td class="spec-value">1 kHz</td>
+                        </tr>
+                        <tr>
+                            <td>Displacement</td>
+                            <td class="spec-value">0-5 mm</td>
+                            <td class="spec-value">0.01 mm</td>
+                            <td class="spec-value">500 Hz</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="consideration-block">
+                    <h4>🔍 Reference Frame Problem</h4>
+                    <p>To measure "tooth movement," what's stationary? The jaw moves during extraction.</p>
+                    <ul class="question-list">
+                        <li>Can IMUs compensate for gross handpiece movement?</li>
+                        <li>Would a reference contact on adjacent teeth establish local coordinates?</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- SAFETY SECTION -->
+            <section id="safety">
+                <div class="section-header">
+                    <span class="section-number">06</span>
+                    <h2>Safety Governor System</h2>
+                </div>
+                
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>Force Limit</h3>
+                        <p>Hard stop at tooth-specific ceiling. Incisor: 80N, Premolar: 100N, Molar: 120N.</p>
+                    </div>
+                    <div class="card">
+                        <h3>Rate Limit</h3>
+                        <p>Stops if force increases >20 N/s—sudden loading before clinician can react.</p>
+                    </div>
+                    <div class="card">
+                        <h3>Stiffness Anomaly</h3>
+                        <p>Triggers if pattern suggests bone flex or incipient fracture.</p>
+                    </div>
+                    <div class="card">
+                        <h3>Non-Physiologic Motion</h3>
+                        <p>Stops if displacement exceeds PDL range without force increase.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- LOGGING SECTION -->
+            <section id="logging">
+                <div class="section-header">
+                    <span class="section-number">07</span>
+                    <h2>Procedure Logging</h2>
+                </div>
+                
+                <table class="spec-table">
+                    <thead>
+                        <tr><th>Data</th><th>Rate</th><th>Retention</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Force curves</td>
+                            <td class="spec-value">1 kHz</td>
+                            <td>7 years min</td>
+                        </tr>
+                        <tr>
+                            <td>Displacement</td>
+                            <td class="spec-value">500 Hz</td>
+                            <td>7 years min</td>
+                        </tr>
+                        <tr>
+                            <td>Safety events</td>
+                            <td class="spec-value">Event-driven</td>
+                            <td>Indefinite</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="consideration-block">
+                    <h4>🔍 Data Governance</h4>
+                    <ul class="question-list">
+                        <li>Who owns procedure data? Patient? Clinic? Manufacturer?</li>
+                        <li>Can logs be subpoenaed in malpractice cases?</li>
+                        <li>What about HIPAA/GDPR compliance for cloud storage?</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- QUESTIONS SECTION -->
+            <section id="questions">
+                <div class="section-header">
+                    <span class="section-number">08</span>
+                    <h2>Open Questions</h2>
+                </div>
+                
+                <div class="card-grid">
+                    <div class="card">
+                        <h3>🧬 Biomechanical</h3>
+                        <ul class="question-list">
+                            <li>How distinguish PDL stretch from bone flex in real-time?</li>
+                            <li>Can we predict fracture from force curves before it happens?</li>
+                            <li>How does medication/systemic disease affect thresholds?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="card">
+                        <h3>🔧 Engineering</h3>
+                        <ul class="question-list">
+                            <li>Where should sensors live—tip or body?</li>
+                            <li>How establish stable displacement reference frame?</li>
+                            <li>Can we achieve 10ms mechanical (not just electrical) stop?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="card">
+                        <h3>🏥 Clinical</h3>
+                        <ul class="question-list">
+                            <li>When does device yield to pure manual technique?</li>
+                            <li>Does this improve outcomes or provide false confidence?</li>
+                            <li>What happens to resident tactile skill development?</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="card">
+                        <h3>⚖️ Regulatory</h3>
+                        <ul class="question-list">
+                            <li>FDA Class II or III?</li>
+                            <li>What clinical trials needed?</li>
+                            <li>Who's liable if governor intervention causes harm?</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <div class="footer-content">
+                <div class="zero-harm-notice">
+                    <h4>⚕️ Zero Harm & Anti-Coercion Commitment</h4>
+                    <p>
+                        This specification is for engineering exploration only. Contains no tracking, 
+                        analytics, or telemetry. All simulation data remains local to your browser. 
+                        Any real implementation must undergo clinical validation and regulatory review.
+                    </p>
+                </div>
+                <p class="attribution">
+                    Concept: <a href="https://planetaryrestorationarchive.com" target="_blank" rel="noopener">Foster + Navi</a> 
+                    · Planetary Restoration Archive · 2025
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════════════════════════
+        // SIMULATION STATE & CONFIGURATION
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        const state = {
+            force: 0,
+            displacement: 0,
+            stiffness: 0,
+            pdlStretch: 0,
+            status: 'safe',
+            time: 0,
+            running: false,
+            animationId: null,
+            history: [],
+            toothType: 'incisor',
+            pdlHealth: 100,
+            boneDensity: 2,
+            tissueCondition: 'healthy',
+            oscillation: 'off'
+        };
+        
+        const toothParams = {
+            incisor: { maxForce: 80, cautionForce: 50, pdlRange: 0.2, baseStiffness: 150 },
+            premolar: { maxForce: 100, cautionForce: 65, pdlRange: 0.25, baseStiffness: 200 },
+            molar: { maxForce: 120, cautionForce: 80, pdlRange: 0.35, baseStiffness: 280 }
+        };
+        
+        const tissueModifiers = {
+            healthy: { stiffnessMult: 1.0, pdlMult: 1.0 },
+            inflamed: { stiffnessMult: 0.7, pdlMult: 1.3 },
+            ankylosed: { stiffnessMult: 3.0, pdlMult: 0.2 },
+            resorption: { stiffnessMult: 0.5, pdlMult: 0.5 }
+        };
+        
+        // DOM References
+        const canvas = document.getElementById('simulationCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const safetyMarker = document.getElementById('safetyMarker');
+        const logViewer = document.getElementById('logViewer');
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // CANVAS SETUP
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        function setupCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHYSICS MODEL
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        function calculateResponse(force) {
+            const tooth = toothParams[state.toothType];
+            const tissue = tissueModifiers[state.tissueCondition];
+            const boneMod = [1.3, 1.0, 0.8][state.boneDensity - 1];
+            const pdlMod = state.pdlHealth / 100;
+            
+            const effectiveStiffness = tooth.baseStiffness * tissue.stiffnessMult * boneMod;
+            const effectivePdlRange = tooth.pdlRange * tissue.pdlMult * pdlMod;
+            const pdlForce = effectiveStiffness * effectivePdlRange * 0.5;
+            
+            let displacement;
+            if (force < pdlForce) {
+                displacement = force / effectiveStiffness;
+            } else {
+                const pdlDisp = pdlForce / effectiveStiffness;
+                const boneStiffness = effectiveStiffness * 3;
+                displacement = pdlDisp + ((force - pdlForce) / boneStiffness) * 0.5;
+            }
+            
+            // Add oscillation
+            if (state.oscillation !== 'off') {
+                const amp = state.oscillation === 'gentle' ? 0.015 : 0.03;
+                const freq = state.oscillation === 'gentle' ? 50 : 30;
+                displacement += Math.sin(state.time * freq * Math.PI * 2) * amp;
+            }
+            
+            return {
+                displacement: Math.max(0, displacement),
+                stiffness: force > 0.1 ? force / Math.max(0.001, displacement) : effectiveStiffness,
+                pdlStretch: (displacement / effectivePdlRange) * 100
+            };
+        }
+        
+        function evaluateStatus(force, pdlStretch) {
+            const tooth = toothParams[state.toothType];
+            if (force >= tooth.maxForce || pdlStretch > 150) return 'danger';
+            if (force >= tooth.cautionForce || pdlStretch > 100) return 'caution';
+            return 'safe';
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // RENDERING
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        function render() {
+            const w = canvas.getBoundingClientRect().width;
+            const h = canvas.getBoundingClientRect().height;
+            const padding = 50;
+            
+            ctx.clearRect(0, 0, w, h);
+            
+            // Grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 5; i++) {
+                const x = padding + (w - padding * 2) * (i / 5);
+                const y = padding + (h - padding * 2) * (i / 5);
+                ctx.beginPath();
+                ctx.moveTo(x, padding);
+                ctx.lineTo(x, h - padding);
+                ctx.moveTo(padding, y);
+                ctx.lineTo(w - padding, y);
+                ctx.stroke();
+            }
+            
+            // Axes labels
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.font = '12px "Plus Jakarta Sans"';
+            ctx.textAlign = 'center';
+            ctx.fillText('Force (N)', w / 2, h - 10);
+            ctx.save();
+            ctx.translate(15, h / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Displacement (mm)', 0, 0);
+            ctx.restore();
+            
+            // Safety zones
+            const tooth = toothParams[state.toothType];
+            const cautionX = padding + ((tooth.cautionForce / 120) * (w - padding * 2));
+            const dangerX = padding + ((tooth.maxForce / 120) * (w - padding * 2));
+            
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.1)';
+            ctx.fillRect(padding, padding, cautionX - padding, h - padding * 2);
+            
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.1)';
+            ctx.fillRect(cautionX, padding, dangerX - cautionX, h - padding * 2);
+            
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+            ctx.fillRect(dangerX, padding, w - padding - dangerX, h - padding * 2);
+            
+            // History curve
+            if (state.history.length > 1) {
+                ctx.beginPath();
+                ctx.strokeStyle = '#10b981';
+                ctx.lineWidth = 2;
+                
+                state.history.forEach((point, i) => {
+                    const x = padding + (point.force / 120) * (w - padding * 2);
+                    const y = h - padding - (point.displacement / 1.0) * (h - padding * 2);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+            }
+            
+            // Current point
+            const currentX = padding + (state.force / 120) * (w - padding * 2);
+            const currentY = h - padding - (state.displacement / 1.0) * (h - padding * 2);
+            
+            ctx.beginPath();
+            ctx.arc(currentX, Math.max(padding, Math.min(h - padding, currentY)), 8, 0, Math.PI * 2);
+            ctx.fillStyle = state.status === 'safe' ? '#10b981' : 
+                           state.status === 'caution' ? '#f59e0b' : '#ef4444';
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        function updateDisplay() {
+            document.getElementById('metricForce').innerHTML = 
+                state.force.toFixed(1) + '<span class="metric-unit">N</span>';
+            document.getElementById('metricDisplacement').innerHTML = 
+                state.displacement.toFixed(3) + '<span class="metric-unit">mm</span>';
+            document.getElementById('metricStiffness').innerHTML = 
+                (state.force > 0.1 ? state.stiffness.toFixed(0) : '--') + '<span class="metric-unit">N/mm</span>';
+            document.getElementById('metricPdlStretch').innerHTML = 
+                Math.min(999, state.pdlStretch).toFixed(0) + '<span class="metric-unit">%</span>';
+            document.getElementById('metricTime').innerHTML = 
+                state.time.toFixed(1) + '<span class="metric-unit">s</span>';
+            
+            statusIndicator.className = 'status-indicator ' + state.status;
+            statusText.textContent = state.status === 'safe' ? 'NOMINAL' : 
+                                    state.status === 'caution' ? 'CAUTION' : 'HARD STOP';
+            
+            // Safety marker position
+            const markerPos = state.status === 'safe' ? 10 + (state.pdlStretch / 100) * 40 :
+                             state.status === 'caution' ? 55 + (state.pdlStretch - 100) / 50 * 20 :
+                             80 + Math.min(15, (state.pdlStretch - 150) / 50 * 15);
+            safetyMarker.style.bottom = Math.min(90, markerPos) + '%';
+        }
+        
+        function addLog(message, type = '') {
+            const time = state.time.toFixed(3).padStart(9, '0');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-timestamp">${time}</span><span class="log-event ${type}">${message}</span>`;
+            logViewer.appendChild(entry);
+            logViewer.scrollTop = logViewer.scrollHeight;
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // SIMULATION LOOP
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        let lastTime = 0;
+        
+        function simulate(timestamp) {
+            if (!state.running) return;
+            
+            const dt = lastTime ? (timestamp - lastTime) / 1000 : 0.016;
+            lastTime = timestamp;
+            state.time += dt;
+            
+            // Calculate response
+            const response = calculateResponse(state.force);
+            state.displacement = response.displacement;
+            state.stiffness = response.stiffness;
+            state.pdlStretch = response.pdlStretch;
+            
+            // Record history
+            if (state.history.length === 0 || 
+                Math.abs(state.force - state.history[state.history.length - 1].force) > 0.5) {
+                state.history.push({
+                    force: state.force,
+                    displacement: state.displacement,
+                    time: state.time
+                });
+            }
+            
+            // Evaluate safety
+            const newStatus = evaluateStatus(state.force, state.pdlStretch);
+            if (newStatus !== state.status) {
+                state.status = newStatus;
+                if (newStatus === 'caution') addLog('Entering caution zone', 'warning');
+                if (newStatus === 'danger') {
+                    addLog('SAFETY GOVERNOR ACTIVATED — HARD STOP', 'danger');
+                    state.running = false;
+                }
+            }
+            
+            updateDisplay();
+            render();
+            
+            if (state.running) {
+                state.animationId = requestAnimationFrame(simulate);
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // EVENT HANDLERS
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        function toggleToc() {
+            document.getElementById('toc').classList.toggle('collapsed');
+        }
+        
+        // Force slider
+        document.getElementById('forceSlider').addEventListener('input', (e) => {
+            state.force = parseFloat(e.target.value);
+            document.getElementById('forceValue').textContent = state.force.toFixed(0) + ' N';
+            
+            if (!state.running) {
+                const response = calculateResponse(state.force);
+                state.displacement = response.displacement;
+                state.stiffness = response.stiffness;
+                state.pdlStretch = response.pdlStretch;
+                state.status = evaluateStatus(state.force, state.pdlStretch);
+                
+                state.history.push({ force: state.force, displacement: state.displacement, time: state.time });
+                
+                updateDisplay();
+                render();
+            }
+        });
+        
+        // PDL slider
+        document.getElementById('pdlSlider').addEventListener('input', (e) => {
+            state.pdlHealth = parseInt(e.target.value);
+            document.getElementById('pdlValue').textContent = state.pdlHealth + '%';
+        });
+        
+        // Bone density slider
+        document.getElementById('boneSlider').addEventListener('input', (e) => {
+            state.boneDensity = parseInt(e.target.value);
+            const labels = ['Osteoporotic', 'Normal', 'Dense'];
+            document.getElementById('boneValue').textContent = labels[state.boneDensity - 1];
+        });
+        
+        // Tissue condition
+        document.getElementById('tissueCondition').addEventListener('change', (e) => {
+            state.tissueCondition = e.target.value;
+            addLog(`Tissue: ${e.target.options[e.target.selectedIndex].text}`, 'info');
+        });
+        
+        // Oscillation
+        document.getElementById('oscillationMode').addEventListener('change', (e) => {
+            state.oscillation = e.target.value;
+            addLog(`Oscillation: ${e.target.options[e.target.selectedIndex].text}`, 'info');
+        });
+        
+        // Tooth selection
+        document.querySelectorAll('.tooth-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                document.querySelectorAll('.tooth-option').forEach(o => {
+                    o.classList.remove('selected');
+                    o.setAttribute('aria-checked', 'false');
+                });
+                opt.classList.add('selected');
+                opt.setAttribute('aria-checked', 'true');
+                state.toothType = opt.dataset.tooth;
+                addLog(`Selected: ${state.toothType}`, 'info');
+                render();
+            });
+        });
+        
+        // Run button
+        document.getElementById('runSimBtn').addEventListener('click', () => {
+            if (!state.running) {
+                state.running = true;
+                lastTime = 0;
+                addLog('Simulation started', 'info');
+                simulate(performance.now());
+            }
+        });
+        
+        // Reset button
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            state.running = false;
+            if (state.animationId) cancelAnimationFrame(state.animationId);
+            
+            state.force = 0;
+            state.displacement = 0;
+            state.stiffness = 0;
+            state.pdlStretch = 0;
+            state.status = 'safe';
+            state.time = 0;
+            state.history = [];
+            
+            document.getElementById('forceSlider').value = 0;
+            document.getElementById('forceValue').textContent = '0 N';
+            
+            logViewer.innerHTML = '<div class="log-entry"><span class="log-timestamp">00:00:00.000</span><span class="log-event info">System reset. Ready.</span></div>';
+            
+            updateDisplay();
+            render();
+        });
+        
+        // E-Stop
+        document.getElementById('eStopBtn').addEventListener('click', () => {
+            state.running = false;
+            if (state.animationId) cancelAnimationFrame(state.animationId);
+            addLog('EMERGENCY STOP ACTIVATED', 'danger');
+        });
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // INITIALIZATION
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        window.addEventListener('load', () => {
+            setupCanvas();
+            render();
+            updateDisplay();
+        });
+        
+        window.addEventListener('resize', () => {
+            setupCanvas();
+            render();
+        });
+    </script>
+</body>
+</html>

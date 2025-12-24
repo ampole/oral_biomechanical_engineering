@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Dental Extraction Biomechanics — PhD-Level Simulation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600&family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap');
+        :root {
+            --void: #05080d; --deep: #0a1018; --panel: #111820; --surface: #1a232e;
+            --border: #2a3744; --muted: #4a5d6f; --text: #c4d4e4; --bright: #e8f0f8;
+            --nominal: #00d4aa; --nominal-dim: rgba(0, 212, 170, 0.15);
+            --caution: #ffb020; --caution-dim: rgba(255, 176, 32, 0.15);
+            --critical: #ff4060; --critical-dim: rgba(255, 64, 96, 0.2);
+            --info: #40a0ff;
+            --font-display: 'Cormorant Garamond', serif;
+            --font-body: 'Sora', sans-serif;
+            --font-mono: 'IBM Plex Mono', monospace;
+        }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font-body); background: var(--void); color: var(--text); line-height: 1.6; min-height: 100vh; }
+        body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse at 20% 30%, rgba(0,212,170,0.03) 0%, transparent 50%), radial-gradient(ellipse at 80% 70%, rgba(64,160,255,0.03) 0%, transparent 50%); z-index: -1; }
+        h1, h2, h3 { font-family: var(--font-display); font-weight: 400; }
+        h1 { font-size: 2.5rem; background: linear-gradient(135deg, var(--bright), var(--nominal)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .app { display: grid; grid-template-columns: 280px 1fr 300px; min-height: 100vh; gap: 1px; background: var(--border); }
+        @media (max-width: 1200px) { .app { grid-template-columns: 1fr; } }
+        header { grid-column: 1/-1; background: var(--deep); padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+        .subtitle { font-size: 0.85rem; color: var(--muted); font-family: var(--font-mono); }
+        .status { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 1rem; border-radius: 4px; font-family: var(--font-mono); font-size: 0.8rem; }
+        .status.nominal { background: var(--nominal-dim); color: var(--nominal); }
+        .status.caution { background: var(--caution-dim); color: var(--caution); }
+        .status.critical { background: var(--critical-dim); color: var(--critical); animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.6; } }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+        aside { background: var(--deep); padding: 1.5rem; overflow-y: auto; max-height: calc(100vh - 80px); }
+        .section { margin-bottom: 2rem; }
+        .section h4 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+        .param { margin-bottom: 1rem; }
+        .param-label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.25rem; }
+        .param-label .val { font-family: var(--font-mono); color: var(--nominal); font-size: 0.8rem; }
+        .param-label .unit { color: var(--muted); font-size: 0.7rem; }
+        input[type="range"] { -webkit-appearance: none; width: 100%; height: 4px; background: var(--surface); border-radius: 2px; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: var(--nominal); border-radius: 50%; cursor: pointer; }
+        select { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem; color: var(--text); font-family: var(--font-body); }
+        main { background: var(--panel); padding: 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
+        .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }
+        .metric { background: var(--deep); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; position: relative; }
+        .metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--nominal); }
+        .metric.caution::before { background: var(--caution); }
+        .metric.critical::before { background: var(--critical); }
+        .metric-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+        .metric-value { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 600; color: var(--bright); }
+        .metric-unit { font-size: 0.7rem; color: var(--muted); }
+        .viz { background: var(--deep); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .viz-header { display: flex; justify-content: space-between; padding: 0.75rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+        .viz-header h3 { font-size: 0.9rem; font-family: var(--font-body); font-weight: 500; color: var(--bright); }
+        .viz-body { position: relative; aspect-ratio: 16/9; min-height: 280px; }
+        .viz-body canvas { width: 100%; height: 100%; }
+        .controls { display: flex; gap: 0.75rem; padding: 1rem; background: var(--surface); border-radius: 6px; flex-wrap: wrap; }
+        .btn { padding: 0.5rem 1rem; border-radius: 4px; font-family: var(--font-body); font-size: 0.85rem; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+        .btn-primary { background: linear-gradient(135deg, var(--nominal), #00a080); color: var(--void); }
+        .btn-primary:hover { box-shadow: 0 4px 12px rgba(0,212,170,0.3); }
+        .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-danger { background: linear-gradient(135deg, var(--critical), #cc3050); color: white; }
+        .equation { background: var(--surface); border-radius: 6px; padding: 1rem; margin: 1rem 0; font-family: var(--font-mono); font-size: 0.85rem; }
+        .equation .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; margin-bottom: 0.5rem; }
+        .equation pre { color: var(--bright); white-space: pre-wrap; line-height: 1.8; }
+        .gauge { background: var(--surface); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
+        .gauge-container { position: relative; height: 100px; display: flex; align-items: center; justify-content: center; }
+        .gauge-value { font-family: var(--font-mono); font-size: 1.8rem; font-weight: 600; color: var(--bright); }
+        .prob-bar { margin-bottom: 0.75rem; }
+        .prob-label { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 0.25rem; }
+        .prob-track { height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+        .prob-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+        .prob-fill.nom { background: var(--nominal); }
+        .prob-fill.cau { background: var(--caution); }
+        .prob-fill.cri { background: var(--critical); }
+        .log { background: var(--surface); border-radius: 6px; max-height: 200px; overflow-y: auto; }
+        .log-entry { display: grid; grid-template-columns: 65px 1fr; gap: 0.5rem; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.75rem; }
+        .log-time { font-family: var(--font-mono); color: var(--muted); }
+        .log-msg.info { color: var(--info); }
+        .log-msg.warn { color: var(--caution); }
+        .log-msg.error { color: var(--critical); }
+        .log-msg.success { color: var(--nominal); }
+        footer { grid-column: 1/-1; background: var(--deep); padding: 1rem 2rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); display: flex; justify-content: space-between; }
+        .zero-harm { color: var(--nominal); display: flex; align-items: center; gap: 0.5rem; }
+        .tabs { display: flex; gap: 2px; background: var(--border); border-radius: 6px 6px 0 0; overflow: hidden; }
+        .tab { flex: 1; padding: 0.5rem; background: var(--surface); border: none; color: var(--muted); font-size: 0.75rem; cursor: pointer; }
+        .tab.active { background: var(--deep); color: var(--nominal); }
+        .tab-content { display: none; background: var(--deep); border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; padding: 1rem; font-size: 0.85rem; }
+        .tab-content.active { display: block; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--surface); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <header>
+        <div>
+            <h1>Dental Extraction Biomechanics</h1>
+            <div class="subtitle">PhD-Level Physics Simulation v2.0</div>
+        </div>
+        <div style="display:flex;gap:1.5rem;align-items:center">
+            <div class="status nominal" id="globalStatus"><span class="dot"></span><span id="statusLabel">NOMINAL</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.8rem;color:var(--muted)">t = <span id="globalTime">0.000</span>s</div>
+        </div>
+    </header>
+    
+    <aside>
+        <div class="section">
+            <h4>Tooth Geometry</h4>
+            <div class="param">
+                <div class="param-label"><span>Tooth Type</span></div>
+                <select id="toothType">
+                    <option value="incisor">Incisor (1 root)</option>
+                    <option value="canine">Canine (curved)</option>
+                    <option value="premolar">Premolar (1-2 roots)</option>
+                    <option value="molar" selected>Molar (3 roots)</option>
+                </select>
+            </div>
+            <div class="param">
+                <div class="param-label"><span>Root Length</span><span class="val"><span id="rootLenVal">13.0</span><span class="unit">mm</span></span></div>
+                <input type="range" id="rootLen" min="8" max="20" step="0.5" value="13">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>Root Curvature (κ)</span><span class="val"><span id="curvVal">0.05</span><span class="unit">mm⁻¹</span></span></div>
+                <input type="range" id="curv" min="0" max="0.2" step="0.01" value="0.05">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>PDL Width</span><span class="val"><span id="pdlWVal">0.20</span><span class="unit">mm</span></span></div>
+                <input type="range" id="pdlW" min="0.1" max="0.4" step="0.01" value="0.20">
+            </div>
+        </div>
+        <div class="section">
+            <h4>Viscoelastic PDL (QLV)</h4>
+            <div class="param">
+                <div class="param-label"><span>E₀ (instantaneous)</span><span class="val"><span id="E0Val">0.68</span><span class="unit">MPa</span></span></div>
+                <input type="range" id="E0" min="0.1" max="2" step="0.01" value="0.68">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>E∞ (long-term)</span><span class="val"><span id="EinfVal">0.15</span><span class="unit">MPa</span></span></div>
+                <input type="range" id="Einf" min="0.01" max="0.5" step="0.01" value="0.15">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>τ₁ (relaxation)</span><span class="val"><span id="tau1Val">0.5</span><span class="unit">s</span></span></div>
+                <input type="range" id="tau1" min="0.1" max="5" step="0.1" value="0.5">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>τ₂ (relaxation)</span><span class="val"><span id="tau2Val">5.0</span><span class="unit">s</span></span></div>
+                <input type="range" id="tau2" min="1" max="30" step="0.5" value="5">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>g₁ (Prony coeff)</span><span class="val"><span id="g1Val">0.45</span></span></div>
+                <input type="range" id="g1" min="0.1" max="0.8" step="0.01" value="0.45">
+            </div>
+        </div>
+        <div class="section">
+            <h4>Fracture Mechanics</h4>
+            <div class="param">
+                <div class="param-label"><span>K_IC (dentin)</span><span class="val"><span id="KicVal">3.1</span><span class="unit">MPa√m</span></span></div>
+                <input type="range" id="Kic" min="1" max="5" step="0.1" value="3.1">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>Flaw size (a₀)</span><span class="val"><span id="flawVal">50</span><span class="unit">μm</span></span></div>
+                <input type="range" id="flaw" min="10" max="200" step="5" value="50">
+            </div>
+        </div>
+        <div class="section">
+            <h4>Loading</h4>
+            <div class="param">
+                <div class="param-label"><span>Applied Force</span><span class="val"><span id="forceVal">0</span><span class="unit">N</span></span></div>
+                <input type="range" id="force" min="0" max="150" step="1" value="0">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>Oscillation Amp</span><span class="val"><span id="oscAVal">0</span><span class="unit">mm</span></span></div>
+                <input type="range" id="oscA" min="0" max="0.3" step="0.01" value="0">
+            </div>
+            <div class="param">
+                <div class="param-label"><span>Oscillation Freq</span><span class="val"><span id="oscFVal">0</span><span class="unit">Hz</span></span></div>
+                <input type="range" id="oscF" min="0" max="100" step="1" value="0">
+            </div>
+        </div>
+    </aside>
+    
+    <main>
+        <div class="metrics">
+            <div class="metric" id="mForce"><div class="metric-label">Applied Force</div><div class="metric-value"><span id="vForce">0.0</span><span class="metric-unit">N</span></div></div>
+            <div class="metric" id="mDisp"><div class="metric-label">Displacement</div><div class="metric-value"><span id="vDisp">0.000</span><span class="metric-unit">mm</span></div></div>
+            <div class="metric" id="mStiff"><div class="metric-label">Stiffness k(t)</div><div class="metric-value"><span id="vStiff">--</span><span class="metric-unit">N/mm</span></div></div>
+            <div class="metric" id="mStress"><div class="metric-label">σ_max</div><div class="metric-value"><span id="vStress">0.0</span><span class="metric-unit">MPa</span></div></div>
+            <div class="metric" id="mKI"><div class="metric-label">K_I / K_IC</div><div class="metric-value"><span id="vKI">0</span><span class="metric-unit">%</span></div></div>
+            <div class="metric" id="mEnergy"><div class="metric-label">Strain Energy</div><div class="metric-value"><span id="vEnergy">0.0</span><span class="metric-unit">mJ</span></div></div>
+        </div>
+        
+        <div class="viz">
+            <div class="viz-header"><h3>Force-Displacement & Phase Space</h3></div>
+            <div class="viz-body"><canvas id="mainCanvas"></canvas></div>
+        </div>
+        
+        <div class="viz">
+            <div class="viz-header"><h3>Stress Field & Fracture Risk</h3></div>
+            <div class="viz-body"><canvas id="stressCanvas"></canvas></div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn btn-primary" id="btnRun">▶ Run</button>
+            <button class="btn btn-secondary" id="btnStep">⏭ Step</button>
+            <button class="btn btn-secondary" id="btnReset">↺ Reset</button>
+            <button class="btn btn-danger" id="btnStop">⬛ E-Stop</button>
+            <label style="display:flex;align-items:center;gap:0.5rem;margin-left:auto;font-size:0.85rem">
+                <input type="checkbox" id="chkGov" checked> Safety Governor
+            </label>
+        </div>
+        
+        <div>
+            <div class="tabs">
+                <button class="tab active" data-tab="visco">Viscoelastic Model</button>
+                <button class="tab" data-tab="frac">Fracture Mechanics</button>
+                <button class="tab" data-tab="bayes">Bayesian Risk</button>
+            </div>
+            <div class="tab-content active" id="tab-visco">
+                <p>The PDL exhibits <strong>quasi-linear viscoelastic (QLV)</strong> behavior modeled via Prony series:</p>
+                <div class="equation">
+                    <div class="label">Relaxation Modulus</div>
+                    <pre>G(t) = E∞ + (E₀-E∞)·[g₁·exp(-t/τ₁) + (1-g₁)·exp(-t/τ₂)]</pre>
+                </div>
+                <div class="equation">
+                    <div class="label">Hereditary Integral (Boltzmann Superposition)</div>
+                    <pre>σ(t) = ∫₀ᵗ G(t-s)·(dε/ds)·ds</pre>
+                </div>
+            </div>
+            <div class="tab-content" id="tab-frac">
+                <p><strong>LEFM</strong> predicts root fracture via stress intensity factor:</p>
+                <div class="equation">
+                    <div class="label">Stress Intensity Factor (Mode I)</div>
+                    <pre>K_I = Y·σ·√(π·a)    where Y ≈ 1.12 (edge crack)
+                    
+Fracture when: K_I ≥ K_IC
+Dentin K_IC ≈ 3.1 MPa√m (⊥ to tubules)</pre>
+                </div>
+            </div>
+            <div class="tab-content" id="tab-bayes">
+                <p><strong>Sequential Bayesian updating</strong> for real-time risk:</p>
+                <div class="equation">
+                    <div class="label">Bayes' Theorem</div>
+                    <pre>P(Fracture|Data) ∝ P(Data|Fracture)·P(Fracture)
+
+Likelihood: P(k_obs|state) ~ N(μ_state, σ²_state)
+Prior updated with K_I/K_IC ratio each timestep</pre>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <aside>
+        <div class="section">
+            <h4>Bayesian Risk Assessment</h4>
+            <div class="gauge">
+                <div class="gauge-container">
+                    <svg viewBox="0 0 160 100" style="width:140px">
+                        <path d="M 20 90 A 60 60 0 0 1 140 90" fill="none" stroke="var(--surface)" stroke-width="10"/>
+                        <path d="M 20 90 A 60 60 0 0 1 50 35" fill="none" stroke="var(--nominal)" stroke-width="10" opacity="0.3"/>
+                        <path d="M 50 35 A 60 60 0 0 1 110 35" fill="none" stroke="var(--caution)" stroke-width="10" opacity="0.3"/>
+                        <path d="M 110 35 A 60 60 0 0 1 140 90" fill="none" stroke="var(--critical)" stroke-width="10" opacity="0.3"/>
+                        <line id="needle" x1="80" y1="85" x2="80" y2="35" stroke="var(--bright)" stroke-width="2" transform="rotate(-90,80,85)"/>
+                        <circle cx="80" cy="85" r="5" fill="var(--bright)"/>
+                    </svg>
+                    <span class="gauge-value" id="riskVal">0%</span>
+                </div>
+            </div>
+            <div class="prob-bar">
+                <div class="prob-label"><span>P(Nominal)</span><span id="pNom">100%</span></div>
+                <div class="prob-track"><div class="prob-fill nom" id="bNom" style="width:100%"></div></div>
+            </div>
+            <div class="prob-bar">
+                <div class="prob-label"><span>P(PDL Damage)</span><span id="pPdl">0%</span></div>
+                <div class="prob-track"><div class="prob-fill cau" id="bPdl" style="width:0%"></div></div>
+            </div>
+            <div class="prob-bar">
+                <div class="prob-label"><span>P(Fracture)</span><span id="pFrac">0%</span></div>
+                <div class="prob-track"><div class="prob-fill cri" id="bFrac" style="width:0%"></div></div>
+            </div>
+        </div>
+        <div class="section">
+            <h4>Viscoelastic State</h4>
+            <div style="font-size:0.8rem;font-family:var(--font-mono)">
+                <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem"><span>Q₁ (hereditary):</span><span id="Q1v">0.000</span></div>
+                <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem"><span>Q₂ (hereditary):</span><span id="Q2v">0.000</span></div>
+                <div style="display:flex;justify-content:space-between"><span>G(t) modulus:</span><span><span id="Gtv">0.68</span> MPa</span></div>
+            </div>
+        </div>
+        <div class="section">
+            <h4>Kalman Filter</h4>
+            <div style="font-size:0.75rem;font-family:var(--font-mono)">
+                <div>x̂ = [<span id="kX">0.000</span>, <span id="kV">0.000</span>]ᵀ</div>
+            </div>
+        </div>
+        <div class="section">
+            <h4>Event Log</h4>
+            <div class="log" id="log">
+                <div class="log-entry"><span class="log-time">00:00.000</span><span class="log-msg info">System initialized</span></div>
+            </div>
+        </div>
+    </aside>
+    
+    <footer>
+        <div class="zero-harm">⚕ Zero Harm Commitment — Design Exploration Only</div>
+        <div>Foster + Navi · Planetary Restoration Archive · 2025</div>
+    </footer>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// PhD-LEVEL DENTAL BIOMECHANICS SIMULATION
+// Implements: QLV Viscoelasticity, LEFM Fracture, Bayesian Risk, Kalman Filtering
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+const PI = Math.PI, SQRT_PI = Math.sqrt(PI);
+
+// Tooth database (literature values)
+const TEETH = {
+    incisor: { pdlArea: 155, maxF: 80, curv: 0.02 },
+    canine: { pdlArea: 235, maxF: 90, curv: 0.08 },
+    premolar: { pdlArea: 180, maxF: 100, curv: 0.05 },
+    molar: { pdlArea: 430, maxF: 120, curv: 0.06 }
+};
+
+// Model parameters
+const P = {
+    toothType: 'molar', rootLen: 13, curv: 0.05, pdlW: 0.20,
+    E0: 0.68, Einf: 0.15, tau1: 0.5, tau2: 5, g1: 0.45,
+    Kic: 3.1, flaw: 50, force: 0, oscA: 0, oscF: 0,
+    get pdlArea() { return TEETH[this.toothType].pdlArea; },
+    get maxF() { return TEETH[this.toothType].maxF; }
+};
+
+// State
+const S = {
+    t: 0, dt: 0.001, running: false,
+    x: 0, v: 0, F: 0, sigma: 0, KI: 0, W: 0,
+    Q1: 0, Q2: 0,
+    Pnom: 1, Ppdl: 0, Pfrac: 0,
+    kalman: { x: [0,0], P: [[0.01,0],[0,0.1]] },
+    hist: { t: [], x: [], F: [], sigma: [], KI: [] },
+    govActive: true, govTriggered: false
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// VISCOELASTIC MODEL (Quasi-Linear Viscoelasticity with Prony Series)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function relaxationModulus(t) {
+    const dE = P.E0 - P.Einf;
+    return P.Einf + dE * (P.g1 * Math.exp(-t/P.tau1) + (1-P.g1) * Math.exp(-t/P.tau2));
+}
+
+function updateHereditary(strainRate, dt) {
+    // Recursive algorithm for computational efficiency
+    S.Q1 = Math.exp(-dt/P.tau1) * S.Q1 + (1 - Math.exp(-dt/P.tau1)) * P.tau1 * strainRate;
+    S.Q2 = Math.exp(-dt/P.tau2) * S.Q2 + (1 - Math.exp(-dt/P.tau2)) * P.tau2 * strainRate;
+}
+
+function viscoelasticStress(strain) {
+    const dE = P.E0 - P.Einf;
+    return P.Einf * strain + dE * (P.g1 * S.Q1 + (1-P.g1) * S.Q2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// FRACTURE MECHANICS (Linear Elastic Fracture Mechanics)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function computeKI(stress, flaw_um) {
+    const Y = 1.12; // geometry factor
+    const a = flaw_um * 1e-6; // m
+    const sigma_Pa = stress * 1e6; // Pa
+    return Y * sigma_Pa * Math.sqrt(PI * a) / 1e6; // MPa√m
+}
+
+function stressConcentration(curvature, flaw_um) {
+    const rho = 1 / Math.max(curvature, 0.001);
+    return 1 + 2 * Math.sqrt((flaw_um/1000) / rho);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// BAYESIAN RISK ESTIMATION
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function gaussian(x, mu, sigma) {
+    const z = (x - mu) / sigma;
+    return Math.exp(-0.5 * z * z) / (sigma * Math.sqrt(2*PI));
+}
+
+function updateBayes(kObs, KIratio) {
+    const kNom = P.E0 * P.pdlArea / P.pdlW;
+    const L_nom = gaussian(kObs, kNom, kNom*0.15);
+    const L_pdl = gaussian(kObs, kNom*0.5, kNom*0.25);
+    const L_frac = gaussian(kObs, kNom*0.1, kNom*0.5);
+    
+    let pN = L_nom * S.Pnom;
+    let pP = L_pdl * S.Ppdl * (1 + 0.5*KIratio);
+    let pF = (L_frac + Math.pow(KIratio,3)*0.1) * S.Pfrac * (1 + 2*Math.pow(KIratio,3));
+    
+    pP += S.Pnom * 0.001 * KIratio;
+    pF += S.Ppdl * 0.002 * KIratio;
+    
+    const tot = pN + pP + pF;
+    S.Pnom = Math.max(0.001, pN/tot);
+    S.Ppdl = Math.min(0.999, pP/tot);
+    S.Pfrac = Math.min(0.999, pF/tot);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// KALMAN FILTER (Sensor Fusion)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function kalmanPredict(dt) {
+    const {x, P} = S.kalman;
+    S.kalman.x = [x[0] + x[1]*dt, x[1]];
+    S.kalman.P = [[P[0][0]+dt*P[1][0]+dt*P[0][1]+dt*dt*P[1][1]+0.0001, P[0][1]+dt*P[1][1]], 
+                  [P[1][0]+dt*P[1][1], P[1][1]+0.001]];
+}
+
+function kalmanUpdate(z) {
+    const {x, P} = S.kalman;
+    const y = z - x[0];
+    const S_inn = P[0][0] + 0.01;
+    const K = [P[0][0]/S_inn, P[1][0]/S_inn];
+    S.kalman.x = [x[0]+K[0]*y, x[1]+K[1]*y];
+    S.kalman.P = [[(1-K[0])*P[0][0], (1-K[0])*P[0][1]], [-K[1]*P[0][0]+P[1][0], -K[1]*P[0][1]+P[1][1]]];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SAFETY GOVERNOR
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function checkSafety() {
+    if (!S.govActive) return {ok:true};
+    if (S.F > P.maxF) return {ok:false, msg:`Force > ${P.maxF}N limit`};
+    if (S.sigma > 80) return {ok:false, msg:`Stress > 80 MPa`};
+    if (S.KI/P.Kic > 0.85) return {ok:false, msg:`K_I approaching K_IC`};
+    if (S.Pfrac > 0.15) return {ok:false, msg:`P(Fracture) > 15%`};
+    return {ok:true};
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// SIMULATION STEP
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function step() {
+    const dt = S.dt;
+    
+    // Applied force
+    S.F = P.force;
+    if (P.oscA > 0 && P.oscF > 0) {
+        S.F += P.oscA * (P.E0 * P.pdlArea / P.pdlW) * Math.sin(2*PI*P.oscF*S.t);
+    }
+    
+    // Safety check
+    const safe = checkSafety();
+    if (!safe.ok && !S.govTriggered) {
+        S.govTriggered = true;
+        S.running = false;
+        addLog(`GOVERNOR: ${safe.msg}`, 'error');
+        setStatus('critical');
+        return;
+    }
+    
+    // Mechanics
+    const strain = S.x / P.pdlW;
+    const strainRate = S.v / P.pdlW;
+    updateHereditary(strainRate, dt);
+    const sigma_pdl = viscoelasticStress(strain);
+    const F_elastic = sigma_pdl * P.pdlArea;
+    const F_net = S.F - F_elastic;
+    
+    // Stress concentration
+    const Kt = stressConcentration(P.curv, P.flaw);
+    S.sigma = Kt * Math.abs(S.F) / (P.pdlArea * 0.1);
+    S.KI = computeKI(S.sigma, P.flaw);
+    
+    // Dynamics
+    const m = 0.0015;
+    const a = F_net / m;
+    S.v += a * dt;
+    S.x = Math.max(0, S.x + S.v * dt);
+    if (S.x <= 0) S.v = Math.max(0, S.v);
+    
+    // Kalman
+    kalmanPredict(dt);
+    kalmanUpdate(S.x + (Math.random()-0.5)*0.01);
+    
+    // Bayesian
+    const kObs = S.x > 0.001 ? S.F/S.x : P.E0*P.pdlArea/P.pdlW;
+    updateBayes(kObs, S.KI/P.Kic);
+    
+    // Energy
+    S.W = 0.5 * F_elastic * S.x;
+    
+    // History
+    if (S.hist.t.length < 3000) {
+        S.hist.t.push(S.t);
+        S.hist.x.push(S.x);
+        S.hist.F.push(S.F);
+        S.hist.sigma.push(S.sigma);
+        S.hist.KI.push(S.KI);
+    }
+    
+    S.t += dt;
+    
+    // Status
+    const KIr = S.KI/P.Kic;
+    if (KIr > 0.7 || S.Pfrac > 0.1) setStatus('critical');
+    else if (KIr > 0.4 || S.Pfrac > 0.05) setStatus('caution');
+    else setStatus('nominal');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+let mainC, mainCtx, stressC, stressCtx;
+
+function initCanvas() {
+    mainC = document.getElementById('mainCanvas');
+    mainCtx = mainC.getContext('2d');
+    stressC = document.getElementById('stressCanvas');
+    stressCtx = stressC.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+}
+
+function resize() {
+    [mainC, stressC].forEach(c => {
+        const r = c.parentElement.getBoundingClientRect();
+        const dpr = devicePixelRatio || 1;
+        c.width = r.width * dpr;
+        c.height = r.height * dpr;
+        c.getContext('2d').scale(dpr, dpr);
+    });
+}
+
+function renderMain() {
+    const w = mainC.width/(devicePixelRatio||1), h = mainC.height/(devicePixelRatio||1);
+    const ctx = mainCtx, pad = {t:40,r:50,b:50,l:60};
+    const pw = w-pad.l-pad.r, ph = h-pad.t-pad.b;
+    
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#0a1018';
+    ctx.fillRect(0,0,w,h);
+    
+    // Grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    for(let i=0;i<=5;i++){
+        const x=pad.l+pw*i/5, y=pad.t+ph*i/5;
+        ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,h-pad.b); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(w-pad.r,y); ctx.stroke();
+    }
+    
+    // Safety zones
+    const cX = pad.l + (P.maxF*0.65/150)*pw;
+    const dX = pad.l + (P.maxF/150)*pw;
+    ctx.fillStyle = 'rgba(0,212,170,0.08)'; ctx.fillRect(pad.l,pad.t,cX-pad.l,ph);
+    ctx.fillStyle = 'rgba(255,176,32,0.08)'; ctx.fillRect(cX,pad.t,dX-cX,ph);
+    ctx.fillStyle = 'rgba(255,64,96,0.1)'; ctx.fillRect(dX,pad.t,w-pad.r-dX,ph);
+    
+    // Curve
+    if(S.hist.F.length>1){
+        ctx.beginPath();
+        ctx.strokeStyle = '#00d4aa';
+        ctx.lineWidth = 2;
+        for(let i=0;i<S.hist.F.length;i++){
+            const x = pad.l + (S.hist.F[i]/150)*pw;
+            const y = h-pad.b - (S.hist.x[i]/1.0)*ph;
+            i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+    }
+    
+    // Current point
+    const cx = pad.l + (S.F/150)*pw;
+    const cy = Math.max(pad.t, Math.min(h-pad.b, h-pad.b - (S.x/1.0)*ph));
+    ctx.beginPath();
+    ctx.arc(cx,cy,6,0,2*PI);
+    ctx.fillStyle = S.Pfrac>0.1?'#ff4060':S.Pfrac>0.05?'#ffb020':'#00d4aa';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    
+    // Labels
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px Sora';
+    ctx.textAlign = 'center';
+    ctx.fillText('Force (N)', w/2, h-10);
+    ctx.save();
+    ctx.translate(15,h/2);
+    ctx.rotate(-PI/2);
+    ctx.fillText('Displacement (mm)',0,0);
+    ctx.restore();
+}
+
+function renderStress() {
+    const w = stressC.width/(devicePixelRatio||1), h = stressC.height/(devicePixelRatio||1);
+    const ctx = stressCtx, pad = {t:40,r:50,b:50,l:60};
+    const pw = w-pad.l-pad.r, ph = h-pad.t-pad.b;
+    
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#0a1018';
+    ctx.fillRect(0,0,w,h);
+    
+    // K_I/K_IC time series
+    ctx.strokeStyle = 'rgba(255,64,96,0.5)';
+    ctx.setLineDash([5,5]);
+    const critY = pad.t + ph*(1-1/1.5);
+    ctx.beginPath();
+    ctx.moveTo(pad.l,critY);
+    ctx.lineTo(w-pad.r,critY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    if(S.hist.KI.length>1){
+        ctx.beginPath();
+        ctx.strokeStyle = '#ff70a0';
+        ctx.lineWidth = 2;
+        const tMax = Math.max(5,S.t);
+        for(let i=0;i<S.hist.KI.length;i++){
+            const r = S.hist.KI[i]/P.Kic;
+            const x = pad.l + (S.hist.t[i]/tMax)*pw;
+            const y = pad.t + ph*(1-r/1.5);
+            i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+    }
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px Sora';
+    ctx.textAlign = 'center';
+    ctx.fillText('Time (s)', w/2, h-10);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText('K_I / K_IC (fracture at 100%)', pad.l, 25);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// UI UPDATES
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function updateUI() {
+    document.getElementById('vForce').textContent = S.F.toFixed(1);
+    document.getElementById('vDisp').textContent = S.x.toFixed(3);
+    document.getElementById('vStiff').textContent = S.x>0.001?(S.F/S.x).toFixed(0):'--';
+    document.getElementById('vStress').textContent = S.sigma.toFixed(1);
+    document.getElementById('vKI').textContent = ((S.KI/P.Kic)*100).toFixed(0);
+    document.getElementById('vEnergy').textContent = S.W.toFixed(2);
+    document.getElementById('globalTime').textContent = S.t.toFixed(3);
+    
+    const KIr = S.KI/P.Kic;
+    document.getElementById('mKI').className = 'metric'+(KIr>0.7?' critical':KIr>0.4?' caution':'');
+    document.getElementById('mStress').className = 'metric'+(S.sigma>60?' critical':S.sigma>30?' caution':'');
+    
+    document.getElementById('pNom').textContent = (S.Pnom*100).toFixed(1)+'%';
+    document.getElementById('pPdl').textContent = (S.Ppdl*100).toFixed(1)+'%';
+    document.getElementById('pFrac').textContent = (S.Pfrac*100).toFixed(1)+'%';
+    document.getElementById('bNom').style.width = (S.Pnom*100)+'%';
+    document.getElementById('bPdl').style.width = (S.Ppdl*100)+'%';
+    document.getElementById('bFrac').style.width = (S.Pfrac*100)+'%';
+    
+    document.getElementById('needle').setAttribute('transform', `rotate(${-90+S.Pfrac*180},80,85)`);
+    document.getElementById('riskVal').textContent = (S.Pfrac*100).toFixed(0)+'%';
+    
+    document.getElementById('Q1v').textContent = S.Q1.toFixed(4);
+    document.getElementById('Q2v').textContent = S.Q2.toFixed(4);
+    document.getElementById('Gtv').textContent = relaxationModulus(S.t).toFixed(3);
+    document.getElementById('kX').textContent = S.kalman.x[0].toFixed(4);
+    document.getElementById('kV').textContent = S.kalman.x[1].toFixed(4);
+}
+
+function setStatus(s) {
+    document.getElementById('globalStatus').className = 'status '+s;
+    document.getElementById('statusLabel').textContent = s.toUpperCase();
+}
+
+function addLog(msg, type='') {
+    const log = document.getElementById('log');
+    const t = S.t.toFixed(3).padStart(8,'0');
+    const e = document.createElement('div');
+    e.className = 'log-entry';
+    e.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${type}">${msg}</span>`;
+    log.appendChild(e);
+    log.scrollTop = log.scrollHeight;
+    while(log.children.length>50) log.removeChild(log.firstChild);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// ANIMATION
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function animate() {
+    if(!S.running) return;
+    for(let i=0;i<10;i++){ step(); if(!S.running) break; }
+    renderMain();
+    renderStress();
+    updateUI();
+    requestAnimationFrame(animate);
+}
+
+function start() { if(!S.running){ S.running=true; S.govTriggered=false; addLog('Simulation started','info'); animate(); }}
+function stop() { S.running=false; addLog('Stopped','warn'); }
+function reset() {
+    stop();
+    Object.assign(S, {t:0,x:0,v:0,F:0,sigma:0,KI:0,W:0,Q1:0,Q2:0,Pnom:1,Ppdl:0,Pfrac:0,govTriggered:false});
+    S.kalman = {x:[0,0],P:[[0.01,0],[0,0.1]]};
+    S.hist = {t:[],x:[],F:[],sigma:[],KI:[]};
+    setStatus('nominal');
+    updateUI();
+    renderMain();
+    renderStress();
+    addLog('Reset','success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// EVENT HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+function setupHandlers() {
+    const sliders = [
+        ['rootLen','rootLen','rootLenVal',1],['curv','curv','curvVal',2],['pdlW','pdlW','pdlWVal',2],
+        ['E0','E0','E0Val',2],['Einf','Einf','EinfVal',2],['tau1','tau1','tau1Val',1],['tau2','tau2','tau2Val',1],
+        ['g1','g1','g1Val',2],['Kic','Kic','KicVal',1],['flaw','flaw','flawVal',0],
+        ['force','force','forceVal',0],['oscA','oscA','oscAVal',2],['oscF','oscF','oscFVal',0]
+    ];
+    sliders.forEach(([id,param,disp,prec])=>{
+        const el = document.getElementById(id);
+        if(el) el.addEventListener('input', e=>{ P[param]=parseFloat(e.target.value); document.getElementById(disp).textContent=P[param].toFixed(prec); });
+    });
+    
+    document.getElementById('toothType').addEventListener('change', e=>{ P.toothType=e.target.value; addLog(`Tooth: ${e.target.value}`,'info'); });
+    document.getElementById('btnRun').addEventListener('click', start);
+    document.getElementById('btnStep').addEventListener('click', ()=>{ for(let i=0;i<10;i++)step(); renderMain();renderStress();updateUI(); });
+    document.getElementById('btnReset').addEventListener('click', reset);
+    document.getElementById('btnStop').addEventListener('click', ()=>{ stop(); addLog('E-STOP','error'); setStatus('critical'); });
+    document.getElementById('chkGov').addEventListener('change', e=>{ S.govActive=e.target.checked; addLog(`Governor ${e.target.checked?'ON':'OFF'}`,e.target.checked?'info':'warn'); });
+    
+    document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click', e=>{
+        document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+        e.target.classList.add('active');
+        document.getElementById('tab-'+e.target.dataset.tab).classList.add('active');
+    }));
+}
+
+window.addEventListener('load', ()=>{
+    initCanvas();
+    setupHandlers();
+    renderMain();
+    renderStress();
+    updateUI();
+    addLog('PhD-Level Biomechanics initialized','success');
+    addLog('QLV viscoelastic model (2-term Prony)','info');
+    addLog('LEFM fracture mechanics enabled','info');
+    addLog('Bayesian risk estimation active','info');
+});
+</script>
+</body>
+</html>

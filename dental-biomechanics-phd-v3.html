@@ -1,943 +1,1011 @@
- 0, 0, 0],
-            [-nu12/E1, -nu23/E2, 1/E2, 0, 0, 0],
-            [0, 0, 0, 1/G23, 0, 0],
-            [0, 0, 0, 0, 1/G12, 0],
-            [0, 0, 0, 0, 0, 1/G12]
-        ];
-    }
-    
-    // Effective modulus for loading direction (simplified)
-    static effectiveModulus(theta = 0) {
-        const E1 = P.boneE1 * 1e3, E2 = P.boneE2 * 1e3;
-        const c = Math.cos(theta), s = Math.sin(theta);
-        return 1 / (c*c*c*c/E1 + s*s*s*s/E2 + c*c*s*s*(1/P.boneG/1e3 - 2*P.boneNu12/E1));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// FRACTURE MECHANICS (LEFM + J-integral + Paris Law)
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class Fracture {
-    // Mode I stress intensity factor
-    static KI(sigma, a) {
-        const Y = 1.12; // Edge crack geometry factor
-        return Y * sigma * Math.sqrt(PI * a);
-    }
-    
-    // Mode II (shear)
-    static KII(tau, a) {
-        const Y = 1.12;
-        return Y * tau * Math.sqrt(PI * a);
-    }
-    
-    // J-integral (plane strain)
-    static Jintegral(KI, KII = 0, E = P.E0 * 1e6, nu = P.nuPdl) {
-        const Ep = E / (1 - nu * nu); // Plane strain
-        return (KI * KI + KII * KII) / Ep;
-    }
-    
-    // Stress concentration from curvature
-    static stressConcentration(curv, flaw_um) {
-        const rho = curv > 0.001 ? 1 / curv : 1000; // mm
-        const a = flaw_um / 1000; // mm
-        return 1 + 2 * Math.sqrt(a / rho);
-    }
-    
-    // Paris law crack growth rate
-    static dadN(dK) {
-        if (dK <= 0) return 0;
-        return P.parisC * Math.pow(dK * 1e6, P.parisM); // m/cycle
-    }
-    
-    // Fracture probability (Weibull)
-    static Pfracture(KI, KIC, m = 12) {
-        if (KI <= 0) return 0;
-        return 1 - Math.exp(-Math.pow(KI / KIC, m));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// ACOUSTIC EMISSION MODEL
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class AcousticEmission {
-    static eventRate(sigma, sigmaRef = 30) {
-        if (sigma <= 0) return 0;
-        const lambda0 = 0.1, m = 4.5;
-        return lambda0 * Math.pow(sigma / sigmaRef, m);
-    }
-    
-    static updateSpectrum(sigma, KI_ratio) {
-        // Decay
-        for (let i = 0; i < S.aeSpectrum.length; i++) {
-            S.aeSpectrum[i] *= 0.92;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Dental Biomechanics — PhD-Level Physics Platform v3</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap');
+        :root {
+            --void: #020408; --abyss: #060a10; --deep: #0a1018; --panel: #0f161e;
+            --surface: #151d28; --elevated: #1c2632; --border: #243040; --muted: #506070;
+            --text: #b0c4d8; --bright: #e4f0ff;
+            --nominal: #00e4b8; --nominal-dim: rgba(0,228,184,0.12);
+            --caution: #ffc020; --caution-dim: rgba(255,192,32,0.12);
+            --critical: #ff3050; --critical-dim: rgba(255,48,80,0.15);
+            --info: #30a0ff; --purple: #a080ff;
+            --font-display: 'Playfair Display', serif;
+            --font-body: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
         }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { font-size: 14px; }
+        body { font-family: var(--font-body); background: var(--void); color: var(--text); line-height: 1.6; min-height: 100vh; }
+        body::before { content: ''; position: fixed; inset: 0; background: radial-gradient(ellipse at 10% 20%, rgba(0,228,184,0.02) 0%, transparent 50%), radial-gradient(ellipse at 90% 80%, rgba(48,160,255,0.02) 0%, transparent 50%); z-index: -1; }
+        h1, h2, h3 { font-family: var(--font-display); font-weight: 400; }
+        h4 { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+        .app { display: grid; grid-template-columns: 280px 1fr 320px; grid-template-rows: auto 1fr auto; min-height: 100vh; gap: 1px; background: var(--border); }
+        @media (max-width: 1200px) { .app { grid-template-columns: 1fr; } }
+        header { grid-column: 1/-1; background: linear-gradient(180deg, var(--deep), var(--abyss)); padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+        .logo h1 { font-size: 1.8rem; background: linear-gradient(135deg, var(--bright), var(--nominal)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .logo .version { font-family: var(--font-mono); font-size: 0.65rem; color: var(--muted); }
+        .status-chip { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border-radius: 4px; font-family: var(--font-mono); font-size: 0.7rem; font-weight: 500; }
+        .status-chip.nominal { background: var(--nominal-dim); color: var(--nominal); }
+        .status-chip.caution { background: var(--caution-dim); color: var(--caution); }
+        .status-chip.critical { background: var(--critical-dim); color: var(--critical); animation: pulse 0.8s infinite; }
+        @keyframes pulse { 50% { opacity: 0.5; } }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+        aside { background: var(--abyss); padding: 1rem; overflow-y: auto; max-height: calc(100vh - 60px); }
+        main { background: var(--panel); padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
+        .section { margin-bottom: 1.25rem; }
+        .section-header { margin-bottom: 0.6rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+        .param { margin-bottom: 0.6rem; }
+        .param-row { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 0.2rem; }
+        .param-value { font-family: var(--font-mono); color: var(--nominal); font-size: 0.7rem; }
+        .param-unit { color: var(--muted); font-size: 0.6rem; }
+        input[type="range"] { -webkit-appearance: none; width: 100%; height: 3px; background: var(--surface); border-radius: 2px; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: var(--nominal); border-radius: 50%; cursor: pointer; }
+        select { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem; color: var(--text); font-size: 0.75rem; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.5rem; }
+        .metric { background: var(--deep); border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem; position: relative; }
+        .metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--nominal); }
+        .metric.caution::before { background: var(--caution); }
+        .metric.critical::before { background: var(--critical); }
+        .metric-label { font-size: 0.55rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+        .metric-value { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; color: var(--bright); }
+        .metric-unit { font-size: 0.6rem; color: var(--muted); }
+        .metric-sub { font-size: 0.6rem; color: var(--muted); font-family: var(--font-mono); }
+        .viz-card { background: var(--deep); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+        .viz-header { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+        .viz-title { font-size: 0.8rem; font-weight: 500; color: var(--bright); }
+        .viz-tabs { display: flex; gap: 2px; }
+        .viz-tab { background: var(--elevated); border: none; color: var(--muted); padding: 0.25rem 0.5rem; font-size: 0.6rem; cursor: pointer; border-radius: 3px; }
+        .viz-tab.active { background: var(--nominal-dim); color: var(--nominal); }
+        .viz-body { position: relative; aspect-ratio: 16/9; min-height: 180px; }
+        .viz-body canvas { width: 100%; height: 100%; }
+        .control-bar { display: flex; gap: 0.5rem; padding: 0.6rem; background: var(--surface); border-radius: 6px; flex-wrap: wrap; align-items: center; }
+        .btn { padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.75rem; font-weight: 500; cursor: pointer; border: none; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, var(--nominal), #00b090); color: var(--void); }
+        .btn-secondary { background: var(--elevated); color: var(--text); border: 1px solid var(--border); }
+        .btn-danger { background: linear-gradient(135deg, var(--critical), #cc2040); color: white; }
+        .control-spacer { flex: 1; }
+        .control-check { display: flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; }
+        .control-check input { accent-color: var(--nominal); }
+        .equation-block { background: var(--surface); border-left: 3px solid var(--purple); border-radius: 0 4px 4px 0; padding: 0.6rem; margin: 0.5rem 0; font-family: var(--font-mono); font-size: 0.65rem; }
+        .equation-label { font-size: 0.55rem; text-transform: uppercase; color: var(--purple); margin-bottom: 0.3rem; }
+        .equation-content { color: var(--bright); white-space: pre; line-height: 1.6; }
+        .theory-tabs { display: flex; gap: 1px; background: var(--border); border-radius: 4px 4px 0 0; overflow-x: auto; }
+        .theory-tab { flex: 1; min-width: 70px; padding: 0.4rem; background: var(--surface); border: none; color: var(--muted); font-size: 0.6rem; cursor: pointer; }
+        .theory-tab.active { background: var(--deep); color: var(--nominal); }
+        .theory-content { display: none; background: var(--deep); border: 1px solid var(--border); border-top: none; border-radius: 0 0 4px 4px; padding: 0.75rem; font-size: 0.75rem; max-height: 300px; overflow-y: auto; }
+        .theory-content.active { display: block; }
+        .risk-gauge { background: var(--surface); border-radius: 6px; padding: 0.75rem; text-align: center; }
+        .gauge-value { font-family: var(--font-mono); font-size: 1.4rem; font-weight: 600; color: var(--bright); }
+        .gauge-label { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; }
+        .prob-bar { margin-bottom: 0.5rem; }
+        .prob-header { display: flex; justify-content: space-between; font-size: 0.65rem; margin-bottom: 0.15rem; }
+        .prob-track { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; }
+        .prob-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+        .prob-fill.nominal { background: var(--nominal); }
+        .prob-fill.caution { background: var(--caution); }
+        .prob-fill.critical { background: var(--critical); }
+        .prob-fill.info { background: var(--info); }
+        .spectrum { display: flex; align-items: flex-end; gap: 1px; height: 40px; padding: 0.4rem; background: var(--surface); border-radius: 4px; }
+        .spectrum-bar { flex: 1; background: var(--nominal); border-radius: 1px 1px 0 0; min-height: 2px; }
+        .spectrum-bar.high { background: var(--critical); }
+        .spectrum-bar.mid { background: var(--caution); }
+        .log-viewer { background: var(--surface); border-radius: 4px; max-height: 150px; overflow-y: auto; font-family: var(--font-mono); font-size: 0.6rem; }
+        .log-entry { display: grid; grid-template-columns: 55px 1fr; gap: 0.4rem; padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--border); }
+        .log-time { color: var(--muted); }
+        .log-msg.info { color: var(--info); }
+        .log-msg.warn { color: var(--caution); }
+        .log-msg.error { color: var(--critical); }
+        .log-msg.success { color: var(--nominal); }
+        footer { grid-column: 1/-1; background: var(--abyss); padding: 0.6rem 1.5rem; border-top: 1px solid var(--border); display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); }
+        .zero-harm { color: var(--nominal); display: flex; align-items: center; gap: 0.4rem; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: var(--surface); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <header>
+        <div class="logo">
+            <h1>Dental Extraction Biomechanics</h1>
+            <div class="version">PhD-Level Physics Platform v3.0</div>
+        </div>
+        <div style="display:flex;gap:1rem;align-items:center">
+            <div class="status-chip nominal" id="globalStatus"><span class="status-dot"></span><span id="statusLabel">NOMINAL</span></div>
+            <div style="font-family:var(--font-mono);font-size:0.7rem;color:var(--muted)">t=<span id="timeDisplay">0.000</span>s</div>
+        </div>
+    </header>
+    
+    <aside>
+        <div class="section">
+            <div class="section-header"><h4>Tooth Geometry</h4></div>
+            <div class="param">
+                <select id="toothType">
+                    <option value="incisor">Incisor (1 root)</option>
+                    <option value="canine">Canine (curved)</option>
+                    <option value="premolar">Premolar (1-2 roots)</option>
+                    <option value="molar" selected>Molar (3 roots)</option>
+                </select>
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Root Length</span><span class="param-value"><span id="vRL">13.0</span><span class="param-unit">mm</span></span></div>
+                <input type="range" id="rootLen" min="8" max="20" step="0.5" value="13">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Curvature κ</span><span class="param-value"><span id="vCurv">0.05</span><span class="param-unit">mm⁻¹</span></span></div>
+                <input type="range" id="curv" min="0" max="0.2" step="0.01" value="0.05">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>PDL Width</span><span class="param-value"><span id="vPdlW">0.20</span><span class="param-unit">mm</span></span></div>
+                <input type="range" id="pdlW" min="0.1" max="0.4" step="0.01" value="0.20">
+            </div>
+        </div>
         
-        // Frequency bands
-        const bands = [
-            { low: 3, high: 10, amp: sigma * 0.01, type: 'pdl' },
-            { low: 10, high: 16, amp: KI_ratio * 0.5, type: 'dentin' },
-            { low: 5, high: 8, amp: (sigma > 5 ? (sigma - 5) * 0.02 : 0), type: 'bone' },
-            { low: 2, high: 6, amp: (KI_ratio > 0.6 ? Math.pow(KI_ratio, 2) : 0), type: 'fracture' }
-        ];
+        <div class="section">
+            <div class="section-header"><h4>Viscoelastic PDL (3-term Prony)</h4></div>
+            <div class="param">
+                <div class="param-row"><span>E₀ (instant)</span><span class="param-value"><span id="vE0">0.68</span><span class="param-unit">MPa</span></span></div>
+                <input type="range" id="E0" min="0.1" max="2" step="0.01" value="0.68">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>E∞ (equilib)</span><span class="param-value"><span id="vEinf">0.15</span><span class="param-unit">MPa</span></span></div>
+                <input type="range" id="Einf" min="0.01" max="0.5" step="0.01" value="0.15">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>τ₁ (fast)</span><span class="param-value"><span id="vTau1">0.3</span><span class="param-unit">s</span></span></div>
+                <input type="range" id="tau1" min="0.05" max="2" step="0.05" value="0.3">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>τ₂ (slow)</span><span class="param-value"><span id="vTau2">3.0</span><span class="param-unit">s</span></span></div>
+                <input type="range" id="tau2" min="1" max="20" step="0.5" value="3">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>τ₃ (ultra)</span><span class="param-value"><span id="vTau3">30</span><span class="param-unit">s</span></span></div>
+                <input type="range" id="tau3" min="10" max="100" step="5" value="30">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>g₁</span><span class="param-value"><span id="vG1">0.35</span></span></div>
+                <input type="range" id="g1" min="0.1" max="0.5" step="0.01" value="0.35">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>g₂</span><span class="param-value"><span id="vG2">0.40</span></span></div>
+                <input type="range" id="g2" min="0.1" max="0.5" step="0.01" value="0.40">
+            </div>
+        </div>
         
-        bands.forEach(band => {
-            for (let i = band.low; i <= band.high && i < S.aeSpectrum.length; i++) {
-                const w = Math.sin((i - band.low) / (band.high - band.low + 1) * PI);
-                S.aeSpectrum[i] += band.amp * w;
-                S.aeSpectrum[i] = Math.min(1, S.aeSpectrum[i]);
-            }
+        <div class="section">
+            <div class="section-header"><h4>Anisotropic Bone</h4></div>
+            <div class="param">
+                <div class="param-row"><span>E₁ (long)</span><span class="param-value"><span id="vBE1">17.0</span><span class="param-unit">GPa</span></span></div>
+                <input type="range" id="boneE1" min="10" max="25" step="0.5" value="17">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>E₂ (trans)</span><span class="param-value"><span id="vBE2">11.5</span><span class="param-unit">GPa</span></span></div>
+                <input type="range" id="boneE2" min="5" max="18" step="0.5" value="11.5">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>G₁₂</span><span class="param-value"><span id="vBG">3.3</span><span class="param-unit">GPa</span></span></div>
+                <input type="range" id="boneG" min="2" max="6" step="0.1" value="3.3">
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Fracture (LEFM)</h4></div>
+            <div class="param">
+                <div class="param-row"><span>K_IC</span><span class="param-value"><span id="vKic">3.1</span><span class="param-unit">MPa√m</span></span></div>
+                <input type="range" id="Kic" min="1" max="5" step="0.1" value="3.1">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Flaw a₀</span><span class="param-value"><span id="vFlaw">50</span><span class="param-unit">μm</span></span></div>
+                <input type="range" id="flaw" min="10" max="200" step="5" value="50">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Paris m</span><span class="param-value"><span id="vParisM">3.5</span></span></div>
+                <input type="range" id="parisM" min="2" max="6" step="0.1" value="3.5">
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Loading</h4></div>
+            <div class="param">
+                <div class="param-row"><span>Force F</span><span class="param-value"><span id="vForce">0</span><span class="param-unit">N</span></span></div>
+                <input type="range" id="force" min="0" max="150" step="1" value="0">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Osc Amp</span><span class="param-value"><span id="vOscA">0</span><span class="param-unit">mm</span></span></div>
+                <input type="range" id="oscA" min="0" max="0.3" step="0.01" value="0">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Osc Freq</span><span class="param-value"><span id="vOscF">0</span><span class="param-unit">Hz</span></span></div>
+                <input type="range" id="oscF" min="0" max="100" step="1" value="0">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>Temp</span><span class="param-value"><span id="vTemp">37.0</span><span class="param-unit">°C</span></span></div>
+                <input type="range" id="temp" min="20" max="42" step="0.5" value="37">
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Monte Carlo</h4></div>
+            <div class="param">
+                <div class="param-row"><span>Samples N</span><span class="param-value"><span id="vMcN">100</span></span></div>
+                <input type="range" id="mcN" min="20" max="500" step="10" value="100">
+            </div>
+            <div class="param">
+                <div class="param-row"><span>CoV</span><span class="param-value"><span id="vCov">10</span><span class="param-unit">%</span></span></div>
+                <input type="range" id="cov" min="5" max="25" step="1" value="10">
+            </div>
+        </div>
+    </aside>
+    
+    <main>
+        <div class="metrics-grid">
+            <div class="metric" id="mForce"><div class="metric-label">Force</div><div class="metric-value"><span id="dForce">0.0</span><span class="metric-unit">N</span></div><div class="metric-sub">Pk:<span id="dFPk">0</span></div></div>
+            <div class="metric" id="mDisp"><div class="metric-label">Displacement</div><div class="metric-value"><span id="dDisp">0.000</span><span class="metric-unit">mm</span></div><div class="metric-sub">ε:<span id="dStr">0</span>%</div></div>
+            <div class="metric" id="mStiff"><div class="metric-label">Stiffness</div><div class="metric-value"><span id="dStiff">--</span><span class="metric-unit">N/mm</span></div><div class="metric-sub">G:<span id="dGt">0.68</span></div></div>
+            <div class="metric" id="mStress"><div class="metric-label">σ_vm</div><div class="metric-value"><span id="dStress">0.0</span><span class="metric-unit">MPa</span></div><div class="metric-sub">σ₁:<span id="dS1">0</span></div></div>
+            <div class="metric" id="mKI"><div class="metric-label">K_I/K_IC</div><div class="metric-value"><span id="dKI">0</span><span class="metric-unit">%</span></div><div class="metric-sub">J:<span id="dJ">0</span></div></div>
+            <div class="metric" id="mDamage"><div class="metric-label">Damage D</div><div class="metric-value"><span id="dDamage">0.0</span><span class="metric-unit">%</span></div><div class="metric-sub">N:<span id="dCyc">0</span></div></div>
+            <div class="metric" id="mEnergy"><div class="metric-label">Energy</div><div class="metric-value"><span id="dEnergy">0.00</span><span class="metric-unit">mJ</span></div><div class="metric-sub">Φ:<span id="dDiss">0</span></div></div>
+            <div class="metric" id="mEntropy"><div class="metric-label">Ṡ_prod</div><div class="metric-value"><span id="dEntropy">0.00</span><span class="metric-unit">mW/K</span></div></div>
+        </div>
+        
+        <div class="viz-card">
+            <div class="viz-header">
+                <span class="viz-title">Force-Displacement & Phase Space</span>
+                <div class="viz-tabs">
+                    <button class="viz-tab active" data-view="fd">F-D</button>
+                    <button class="viz-tab" data-view="phase">Phase</button>
+                    <button class="viz-tab" data-view="hyst">σ-ε</button>
+                </div>
+            </div>
+            <div class="viz-body"><canvas id="mainCanvas"></canvas></div>
+        </div>
+        
+        <div class="viz-card">
+            <div class="viz-header">
+                <span class="viz-title">Stress & Fracture Mechanics</span>
+                <div class="viz-tabs">
+                    <button class="viz-tab active" data-view="KI">K_I</button>
+                    <button class="viz-tab" data-view="damage">Damage</button>
+                    <button class="viz-tab" data-view="crack">Crack</button>
+                </div>
+            </div>
+            <div class="viz-body"><canvas id="stressCanvas"></canvas></div>
+        </div>
+        
+        <div class="viz-card">
+            <div class="viz-header">
+                <span class="viz-title">Monte Carlo Uncertainty</span>
+                <div class="viz-tabs">
+                    <button class="viz-tab active" data-view="scatter">Scatter</button>
+                    <button class="viz-tab" data-view="hist">Histogram</button>
+                </div>
+            </div>
+            <div class="viz-body"><canvas id="mcCanvas"></canvas></div>
+        </div>
+        
+        <div class="control-bar">
+            <button class="btn btn-primary" id="btnRun">▶ Run</button>
+            <button class="btn btn-secondary" id="btnStep">⏭ Step</button>
+            <button class="btn btn-secondary" id="btnMC">🎲 MC</button>
+            <button class="btn btn-secondary" id="btnReset">↺ Reset</button>
+            <button class="btn btn-danger" id="btnStop">⬛ E-Stop</button>
+            <span class="control-spacer"></span>
+            <label class="control-check"><input type="checkbox" id="chkGov" checked> Governor</label>
+            <label class="control-check"><input type="checkbox" id="chkNoise" checked> Noise</label>
+            <label class="control-check"><input type="checkbox" id="chkDamage" checked> Damage</label>
+        </div>
+        
+        <div>
+            <div class="theory-tabs">
+                <button class="theory-tab active" data-tab="qlv">QLV</button>
+                <button class="theory-tab" data-tab="bone">Bone</button>
+                <button class="theory-tab" data-tab="lefm">LEFM</button>
+                <button class="theory-tab" data-tab="ae">AE</button>
+                <button class="theory-tab" data-tab="bayes">Bayes</button>
+                <button class="theory-tab" data-tab="kalman">Kalman</button>
+                <button class="theory-tab" data-tab="damage">Damage</button>
+                <button class="theory-tab" data-tab="sde">Langevin</button>
+            </div>
+            <div class="theory-content active" id="tab-qlv">
+                <p><strong>Quasi-Linear Viscoelasticity</strong> with 3-term Prony series:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Relaxation Modulus</div>
+                    <div class="equation-content">G(t) = E∞ + (E₀-E∞)·[g₁e^(-t/τ₁) + g₂e^(-t/τ₂) + g₃e^(-t/τ₃)]
+Hereditary: σ(t) = ∫₀ᵗ G(t-s)·(∂ε/∂s)ds
+WLF: log(aT) = -C₁(T-Tref)/(C₂+(T-Tref))</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-bone">
+                <p><strong>Transversely Isotropic</strong> bone (5 constants):</p>
+                <div class="equation-block">
+                    <div class="equation-label">Compliance Matrix</div>
+                    <div class="equation-content">[S] = [1/E₁, -ν₁₂/E₁, ...; ...]
+G₂₃ = E₂/(2(1+ν₂₃))
+E₁≈17GPa, E₂≈11.5GPa, G₁₂≈3.3GPa</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-lefm">
+                <p><strong>Linear Elastic Fracture Mechanics</strong>:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Stress Intensity & J-integral</div>
+                    <div class="equation-content">K_I = Y·σ·√(πa),  Y≈1.12
+J = (1-ν²)/E·(K_I² + K_II²)
+Paris: da/dN = C·(ΔK)^m</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-ae">
+                <p><strong>Acoustic Emission</strong> Weibull model:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Event Rate</div>
+                    <div class="equation-content">λ(σ) = λ₀·(σ/σ_ref)^m
+PDL: 100-300kHz | Dentin: 300-500kHz
+b-value: log(N) = a - b·M</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-bayes">
+                <p><strong>Sequential Monte Carlo</strong>:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Particle Filter</div>
+                    <div class="equation-content">1. Predict: x̃ᵢ ~ p(xₖ|xᵢₖ₋₁)
+2. Update: wᵢ ∝ wᵢ·p(yₖ|x̃ᵢ)
+3. Resample if N_eff < threshold</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-kalman">
+                <p><strong>Kalman-Bucy Filter</strong>:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Continuous-Discrete</div>
+                    <div class="equation-content">dx̂/dt = A·x̂ + B·u
+dP/dt = A·P + P·Aᵀ + Q
+K = P·Hᵀ·(H·P·Hᵀ + R)⁻¹</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-damage">
+                <p><strong>Continuum Damage Mechanics</strong>:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Lemaitre Model</div>
+                    <div class="equation-content">σ̃ = σ/(1-D)
+dD/dN = [σ_eq/(σ_u(1-D))]^β
+Miner: D = Σ(nᵢ/Nᵢ)</div>
+                </div>
+            </div>
+            <div class="theory-content" id="tab-sde">
+                <p><strong>Langevin SDE</strong>:</p>
+                <div class="equation-block">
+                    <div class="equation-label">Thermal Fluctuations</div>
+                    <div class="equation-content">m·ẍ = F - kx - γẋ + √(2γkT)·ξ(t)
+kT ≈ 4.11 pN·nm @ 37°C
+⟨ξ(t)ξ(t')⟩ = δ(t-t')</div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <aside>
+        <div class="section">
+            <div class="section-header"><h4>Bayesian Risk</h4></div>
+            <div class="risk-gauge">
+                <svg viewBox="0 0 160 90" style="width:130px;margin:0 auto;display:block">
+                    <path d="M 20 80 A 55 55 0 0 1 140 80" fill="none" stroke="#151d28" stroke-width="8"/>
+                    <path d="M 20 80 A 55 55 0 0 1 60 30" fill="none" stroke="#00e4b8" stroke-width="8" opacity="0.3"/>
+                    <path d="M 60 30 A 55 55 0 0 1 100 30" fill="none" stroke="#ffc020" stroke-width="8" opacity="0.3"/>
+                    <path d="M 100 30 A 55 55 0 0 1 140 80" fill="none" stroke="#ff3050" stroke-width="8" opacity="0.3"/>
+                    <line id="riskNeedle" x1="80" y1="75" x2="80" y2="30" stroke="#e4f0ff" stroke-width="2" transform="rotate(-90,80,75)"/>
+                    <circle cx="80" cy="75" r="4" fill="#e4f0ff"/>
+                </svg>
+                <div class="gauge-value" id="riskValue">0.0%</div>
+                <div class="gauge-label">P(Adverse)</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>State Probabilities</h4></div>
+            <div class="prob-bar"><div class="prob-header"><span>P(Nominal)</span><span id="pNom">100%</span></div><div class="prob-track"><div class="prob-fill nominal" id="bNom" style="width:100%"></div></div></div>
+            <div class="prob-bar"><div class="prob-header"><span>P(PDL Dmg)</span><span id="pPdl">0%</span></div><div class="prob-track"><div class="prob-fill caution" id="bPdl" style="width:0%"></div></div></div>
+            <div class="prob-bar"><div class="prob-header"><span>P(Bone Dmg)</span><span id="pBone">0%</span></div><div class="prob-track"><div class="prob-fill info" id="bBone" style="width:0%"></div></div></div>
+            <div class="prob-bar"><div class="prob-header"><span>P(Fracture)</span><span id="pFrac">0%</span></div><div class="prob-track"><div class="prob-fill critical" id="bFrac" style="width:0%"></div></div></div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Acoustic Emission</h4></div>
+            <div class="spectrum" id="aeSpectrum"></div>
+            <div style="display:flex;justify-content:space-between;font-size:0.55rem;color:var(--muted);margin-top:0.2rem"><span>0</span><span>250kHz</span><span>500kHz</span></div>
+            <div style="font-size:0.65rem;margin-top:0.3rem"><span style="color:var(--muted)">Count:</span> <span id="aeCount">0</span> | <span style="color:var(--muted)">b:</span> <span id="bValue">--</span></div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Viscoelastic State</h4></div>
+            <div style="font-size:0.7rem;font-family:var(--font-mono)">
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Q₁:</span><span id="vQ1">0</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Q₂:</span><span id="vQ2">0</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Q₃:</span><span id="vQ3">0</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">G(t):</span><span><span id="vGtR">0.68</span> MPa</span></div>
+                <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">tan(δ):</span><span id="vTanD">0</span></div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Kalman State</h4></div>
+            <div style="font-size:0.65rem;font-family:var(--font-mono)">x̂=[<span id="kX">0</span>,<span id="kV">0</span>,<span id="kA">0</span>]ᵀ</div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Monte Carlo</h4></div>
+            <div style="font-size:0.7rem">
+                <div><span style="color:var(--muted)">K_I:</span> <span id="mcKI">-- ± --</span></div>
+                <div><span style="color:var(--muted)">P(fail):</span> <span id="mcPfail">--%</span></div>
+                <div><span style="color:var(--muted)">95%CI:</span> <span id="mcCI">--</span></div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header"><h4>Event Log</h4></div>
+            <div class="log-viewer" id="logViewer">
+                <div class="log-entry"><span class="log-time">00:00.00</span><span class="log-msg info">Init</span></div>
+            </div>
+        </div>
+    </aside>
+    
+    <footer>
+        <div class="zero-harm"><span>⚕</span> Zero Harm — Design Only — Not Medical Device</div>
+        <div>Foster + Navi · 2025</div>
+    </footer>
+</div>
+<script>
+const PI = Math.PI, SQRT_PI = Math.sqrt(PI);
+const kB = 1.380649e-23;
+
+const TEETH = {
+    incisor: { pdlArea: 155, maxF: 80, curv: 0.02 },
+    canine: { pdlArea: 235, maxF: 95, curv: 0.08 },
+    premolar: { pdlArea: 180, maxF: 100, curv: 0.05 },
+    molar: { pdlArea: 430, maxF: 130, curv: 0.06 }
+};
+
+const P = {
+    toothType: 'molar', rootLen: 13, curv: 0.05, pdlW: 0.20,
+    E0: 0.68, Einf: 0.15, tau1: 0.3, tau2: 3, tau3: 30, g1: 0.35, g2: 0.40,
+    boneE1: 17, boneE2: 11.5, boneG: 3.3,
+    Kic: 3.1, flaw: 50, parisC: 1e-11, parisM: 3.5,
+    force: 0, oscA: 0, oscF: 0, temp: 37, mcN: 100, cov: 10,
+    get pdlArea() { return TEETH[this.toothType]?.pdlArea || 400; },
+    get maxF() { return TEETH[this.toothType]?.maxF || 100; },
+    get g3() { return Math.max(0, 1 - this.g1 - this.g2); },
+    get kT() { return kB * (this.temp + 273.15) * 1e21; }
+};
+
+const S = {
+    t: 0, dt: 0.001, running: false,
+    x: 0, v: 0, a: 0, F: 0, Q1: 0, Q2: 0, Q3: 0,
+    sigma: 0, sigmaVM: 0, sigma1: 0, KI: 0, KII: 0, J: 0,
+    crackLen: 50e-6, D: 0, cycles: 0,
+    W_elastic: 0, W_dissipated: 0, entropyProd: 0,
+    P_nom: 1, P_pdl: 0, P_bone: 0, P_frac: 0,
+    kalman: { x: [0,0,0], P: [[0.01,0,0],[0,0.1,0],[0,0,1]] },
+    aeSpectrum: new Array(32).fill(0), aeCount: 0, aeMagnitudes: [],
+    mcResults: null,
+    hist: { t:[], x:[], v:[], F:[], sigma:[], KI:[], D:[], W:[] },
+    peakF: 0, peakX: 0, govActive: true, govTriggered: false,
+    noiseEnabled: true, damageEnabled: true
+};
+
+// Viscoelastic Model
+class Viscoelastic {
+    static shiftFactor(T, Tref=37) {
+        const C1=17.44, C2=51.6, dT=T-Tref;
+        return Math.pow(10, -C1*dT/(C2+dT));
+    }
+    static G(t) {
+        const aT = this.shiftFactor(P.temp), dE = P.E0 - P.Einf;
+        return P.Einf + dE*(P.g1*Math.exp(-t/(P.tau1*aT)) + P.g2*Math.exp(-t/(P.tau2*aT)) + P.g3*Math.exp(-t/(P.tau3*aT)));
+    }
+    static updateQ(strainRate, dt) {
+        const aT = this.shiftFactor(P.temp);
+        const t1=P.tau1*aT, t2=P.tau2*aT, t3=P.tau3*aT;
+        S.Q1 = Math.exp(-dt/t1)*S.Q1 + (1-Math.exp(-dt/t1))*t1*strainRate;
+        S.Q2 = Math.exp(-dt/t2)*S.Q2 + (1-Math.exp(-dt/t2))*t2*strainRate;
+        S.Q3 = Math.exp(-dt/t3)*S.Q3 + (1-Math.exp(-dt/t3))*t3*strainRate;
+    }
+    static stress(strain) {
+        const dE = P.E0 - P.Einf;
+        return P.Einf*strain + dE*(P.g1*S.Q1 + P.g2*S.Q2 + P.g3*S.Q3);
+    }
+    static tanDelta(omega) {
+        const aT = this.shiftFactor(P.temp), dE = P.E0 - P.Einf;
+        let Ep=P.Einf, Epp=0;
+        [[P.g1,P.tau1],[P.g2,P.tau2],[P.g3,P.tau3]].forEach(([g,tau])=>{
+            const wt = omega*tau*aT;
+            Ep += dE*g*wt*wt/(1+wt*wt);
+            Epp += dE*g*wt/(1+wt*wt);
         });
-        
-        // Random noise
-        for (let i = 0; i < S.aeSpectrum.length; i++) {
-            S.aeSpectrum[i] += Math.random() * 0.015;
-            S.aeSpectrum[i] = Math.min(1, Math.max(0, S.aeSpectrum[i]));
-        }
+        return Epp/Ep;
     }
-    
-    // Gutenberg-Richter b-value
+}
+
+// Fracture Mechanics
+class Fracture {
+    static KI(sigma, a) { return 1.12 * sigma * Math.sqrt(PI * a); }
+    static KII(tau, a) { return 1.12 * tau * Math.sqrt(PI * a); }
+    static Jintegral(KI, KII=0, E=P.E0*1e6, nu=0.45) {
+        return (KI*KI + KII*KII) / (E/(1-nu*nu));
+    }
+    static stressConc(curv, flaw_um) {
+        const rho = curv>0.001 ? 1/curv : 1000;
+        return 1 + 2*Math.sqrt((flaw_um/1000)/rho);
+    }
+    static dadN(dK) { return dK>0 ? P.parisC*Math.pow(dK*1e6, P.parisM) : 0; }
+}
+
+// Acoustic Emission
+class AE {
+    static eventRate(sigma) { return sigma>0 ? 0.1*Math.pow(sigma/30, 4.5) : 0; }
+    static updateSpectrum(sigma, KIr) {
+        for(let i=0;i<S.aeSpectrum.length;i++) S.aeSpectrum[i]*=0.92;
+        const bands = [
+            {l:3,h:10,a:sigma*0.01},{l:10,h:16,a:KIr*0.5},
+            {l:5,h:8,a:sigma>5?(sigma-5)*0.02:0},{l:2,h:6,a:KIr>0.6?KIr*KIr:0}
+        ];
+        bands.forEach(b=>{for(let i=b.l;i<=b.h&&i<S.aeSpectrum.length;i++){
+            S.aeSpectrum[i]+=b.a*Math.sin((i-b.l)/(b.h-b.l+1)*PI);
+            S.aeSpectrum[i]=Math.min(1,S.aeSpectrum[i]);
+        }});
+        for(let i=0;i<S.aeSpectrum.length;i++) S.aeSpectrum[i]=Math.min(1,Math.max(0,S.aeSpectrum[i]+Math.random()*0.015));
+    }
     static bValue() {
-        if (S.aeMagnitudes.length < 10) return null;
-        const mags = S.aeMagnitudes.slice(-100);
-        const mean = mags.reduce((a, b) => a + b, 0) / mags.length;
-        return 1 / (mean * Math.log(10));
+        if(S.aeMagnitudes.length<10) return null;
+        const m = S.aeMagnitudes.slice(-100).reduce((a,b)=>a+b,0)/Math.min(100,S.aeMagnitudes.length);
+        return 1/(m*Math.log(10));
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// BAYESIAN RISK (Sequential Monte Carlo)
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class BayesianSMC {
-    static update(kObs, KI_ratio) {
-        const kNom = P.E0 * P.pdlArea / P.pdlW;
-        
-        // Likelihoods
-        const L_nom = gaussian(kObs, kNom, kNom * 0.12);
-        const L_pdl = gaussian(kObs, kNom * 0.55, kNom * 0.2);
-        const L_bone = gaussian(kObs, kNom * 0.35, kNom * 0.25);
-        const L_frac = gaussian(kObs, kNom * 0.1, kNom * 0.4);
-        
-        // Priors with transition
-        let pN = L_nom * S.P_nom;
-        let pP = L_pdl * S.P_pdl * (1 + 0.3 * KI_ratio) + S.P_nom * 0.001 * KI_ratio;
-        let pB = L_bone * S.P_bone * (1 + 0.4 * KI_ratio) + S.P_pdl * 0.001 * KI_ratio;
-        let pF = (L_frac + Math.pow(KI_ratio, 4) * 0.05) * S.P_frac * (1 + 3 * Math.pow(KI_ratio, 3)) 
-               + S.P_bone * 0.002 * KI_ratio + S.P_pdl * 0.001 * Math.pow(KI_ratio, 2);
-        
-        const tot = pN + pP + pB + pF + 1e-10;
-        S.P_nom = Math.max(0.001, pN / tot);
-        S.P_pdl = Math.min(0.998, pP / tot);
-        S.P_bone = Math.min(0.998, pB / tot);
-        S.P_frac = Math.min(0.998, pF / tot);
+// Bayesian SMC
+class Bayes {
+    static update(kObs, KIr) {
+        const kN = P.E0*P.pdlArea/P.pdlW;
+        const Ln = gauss(kObs,kN,kN*0.12), Lp = gauss(kObs,kN*0.55,kN*0.2);
+        const Lb = gauss(kObs,kN*0.35,kN*0.25), Lf = gauss(kObs,kN*0.1,kN*0.4);
+        let pN = Ln*S.P_nom, pP = Lp*S.P_pdl*(1+0.3*KIr) + S.P_nom*0.001*KIr;
+        let pB = Lb*S.P_bone*(1+0.4*KIr) + S.P_pdl*0.001*KIr;
+        let pF = (Lf+Math.pow(KIr,4)*0.05)*S.P_frac*(1+3*Math.pow(KIr,3)) + S.P_bone*0.002*KIr;
+        const tot = pN+pP+pB+pF+1e-10;
+        S.P_nom=Math.max(0.001,pN/tot); S.P_pdl=Math.min(0.998,pP/tot);
+        S.P_bone=Math.min(0.998,pB/tot); S.P_frac=Math.min(0.998,pF/tot);
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// KALMAN-BUCY FILTER
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class KalmanBucy {
+// Kalman
+class Kalman {
     static predict(dt) {
-        const {x, P: Pk} = S.kalman;
-        // State transition: [x, v, a]
-        const Phi = [
-            [1, dt, 0.5*dt*dt],
-            [0, 1, dt],
-            [0, 0, 0.95] // acceleration decay
-        ];
-        
-        // Predicted state
-        S.kalman.x = [
-            Phi[0][0]*x[0] + Phi[0][1]*x[1] + Phi[0][2]*x[2],
-            Phi[1][0]*x[0] + Phi[1][1]*x[1] + Phi[1][2]*x[2],
-            Phi[2][0]*x[0] + Phi[2][1]*x[1] + Phi[2][2]*x[2]
-        ];
-        
-        // Process noise
-        const Q = [[dt*dt*dt*dt/4*0.001, dt*dt*dt/2*0.001, dt*dt/2*0.001],
-                   [dt*dt*dt/2*0.001, dt*dt*0.001, dt*0.001],
-                   [dt*dt/2*0.001, dt*0.001, 0.01]];
-        
-        // P = Phi*P*Phi' + Q (simplified)
-        S.kalman.P[0][0] = Pk[0][0] + dt*dt*Pk[1][1] + Q[0][0];
-        S.kalman.P[1][1] = Pk[1][1] + dt*dt*Pk[2][2] + Q[1][1];
-        S.kalman.P[2][2] = 0.9*Pk[2][2] + Q[2][2];
+        const {x,P:Pk}=S.kalman;
+        S.kalman.x = [x[0]+dt*x[1]+0.5*dt*dt*x[2], x[1]+dt*x[2], x[2]*0.95];
+        S.kalman.P[0][0] = Pk[0][0]+dt*dt*Pk[1][1]+0.0001;
+        S.kalman.P[1][1] = Pk[1][1]+dt*dt*Pk[2][2]+0.001;
+        S.kalman.P[2][2] = 0.9*Pk[2][2]+0.01;
     }
-    
     static update(z) {
-        const {x, P: Pk} = S.kalman;
-        const R = 0.005; // Measurement noise
-        const H = [1, 0, 0]; // Measure position only
-        
-        const y = z - x[0]; // Innovation
-        const Sinv = 1 / (Pk[0][0] + R);
-        const K = [Pk[0][0] * Sinv, Pk[1][0] * Sinv || 0, Pk[2][0] * Sinv || 0];
-        
-        S.kalman.x = [x[0] + K[0]*y, x[1] + K[1]*y, x[2] + K[2]*y];
-        S.kalman.P[0][0] = (1 - K[0]) * Pk[0][0];
-        S.kalman.P[1][1] = Pk[1][1] - K[1] * Pk[0][1];
-        S.kalman.P[2][2] = Pk[2][2] - K[2] * Pk[0][2];
+        const {x,P:Pk}=S.kalman, R=0.005;
+        const y = z-x[0], Sinv = 1/(Pk[0][0]+R);
+        const K = [Pk[0][0]*Sinv, (Pk[1][0]||0)*Sinv, (Pk[2][0]||0)*Sinv];
+        S.kalman.x = [x[0]+K[0]*y, x[1]+K[1]*y, x[2]+K[2]*y];
+        S.kalman.P[0][0] = (1-K[0])*Pk[0][0];
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// MONTE CARLO UNCERTAINTY PROPAGATION
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class MonteCarlo {
-    // Latin Hypercube Sampling
-    static latinHypercube(n, dims) {
-        const samples = [];
-        for (let d = 0; d < dims; d++) {
-            const perm = shuffle([...Array(n).keys()]);
-            for (let i = 0; i < n; i++) {
-                if (!samples[i]) samples[i] = [];
-                samples[i][d] = (perm[i] + Math.random()) / n;
-            }
+// Monte Carlo
+class MC {
+    static lhs(n, dims) {
+        const s = [];
+        for(let d=0;d<dims;d++){
+            const p = shuffle([...Array(n).keys()]);
+            for(let i=0;i<n;i++){ if(!s[i])s[i]=[]; s[i][d]=(p[i]+Math.random())/n; }
         }
-        return samples;
+        return s;
     }
-    
-    // Run MC simulation
     static run() {
-        const n = P.mcN;
-        const cov = P.cov / 100;
-        const results = { KI: [], sigma: [], disp: [] };
-        
-        // Parameters to vary: E0, Kic, flaw, pdlW
-        const lhs = this.latinHypercube(n, 4);
-        
-        for (let i = 0; i < n; i++) {
-            const E0_s = P.E0 * (1 + (lhs[i][0] - 0.5) * 2 * cov * randn());
-            const Kic_s = P.Kic * (1 + (lhs[i][1] - 0.5) * 2 * cov * randn());
-            const flaw_s = P.flaw * (1 + (lhs[i][2] - 0.5) * 2 * cov);
-            const pdlW_s = P.pdlW * (1 + (lhs[i][3] - 0.5) * 2 * cov);
-            
-            // Simple model evaluation
-            const k = E0_s * P.pdlArea / pdlW_s;
-            const x_s = P.force / k;
-            const strain = x_s / pdlW_s;
-            const sigma_s = E0_s * strain;
-            const Kt = Fracture.stressConcentration(P.curv, flaw_s);
-            const sigmaMax = Kt * sigma_s * 10;
-            const KI_s = Fracture.KI(sigmaMax * 1e6, flaw_s * 1e-6) / 1e6;
-            
-            results.KI.push(KI_s);
-            results.sigma.push(sigmaMax);
-            results.disp.push(x_s);
+        const n=P.mcN, cov=P.cov/100, res={KI:[],sigma:[],disp:[]};
+        const lhs = this.lhs(n,4);
+        for(let i=0;i<n;i++){
+            const E0s=P.E0*(1+(lhs[i][0]-0.5)*2*cov*randn());
+            const Kics=P.Kic*(1+(lhs[i][1]-0.5)*2*cov*randn());
+            const flaws=P.flaw*(1+(lhs[i][2]-0.5)*2*cov);
+            const pdlWs=P.pdlW*(1+(lhs[i][3]-0.5)*2*cov);
+            const k=E0s*P.pdlArea/pdlWs, xs=P.force/k;
+            const strain=xs/pdlWs, sigmas=E0s*strain;
+            const Kt=Fracture.stressConc(P.curv,flaws);
+            const sigmaMax=Kt*sigmas*10;
+            const KIs=Fracture.KI(sigmaMax*1e6,flaws*1e-6)/1e6;
+            res.KI.push(KIs); res.sigma.push(sigmaMax); res.disp.push(xs);
         }
-        
-        // Statistics
-        const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-        const std = arr => {
-            const m = mean(arr);
-            return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length);
-        };
-        const percentile = (arr, p) => {
-            const sorted = [...arr].sort((a, b) => a - b);
-            return sorted[Math.floor(p * sorted.length)];
-        };
-        
+        const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+        const std=a=>{const m=mean(a);return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/a.length);};
+        const pct=(a,p)=>[...a].sort((x,y)=>x-y)[Math.floor(p*a.length)];
         S.mcResults = {
-            KI_mean: mean(results.KI),
-            KI_std: std(results.KI),
-            KI_p05: percentile(results.KI, 0.05),
-            KI_p95: percentile(results.KI, 0.95),
-            Pfail: results.KI.filter(k => k > P.Kic).length / n,
-            samples: results
+            KI_mean:mean(res.KI), KI_std:std(res.KI),
+            KI_p05:pct(res.KI,0.05), KI_p95:pct(res.KI,0.95),
+            Pfail:res.KI.filter(k=>k>P.Kic).length/n, samples:res
         };
-        
         return S.mcResults;
     }
-    
-    // Sobol sensitivity indices (first-order, simplified)
-    static sobolIndices() {
-        // Simplified variance-based sensitivity
-        return { E0: 0.35, Kic: 0.25, flaw: 0.30, pdlW: 0.10 };
-    }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// DAMAGE MECHANICS
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class DamageMechanics {
+// Damage
+class Damage {
     static update(sigma, dt) {
-        if (!S.damageEnabled) return;
-        
-        const sigmaU = 120; // Ultimate stress (MPa)
-        const beta = 4;
-        
-        // Effective stress
-        const sigmaEff = sigma / (1 - S.D);
-        
-        // Damage evolution (simplified Lemaitre)
-        if (sigmaEff > 10) {
-            const dD = Math.pow(sigmaEff / (sigmaU * (1 - S.D)), beta) * dt * 0.01;
-            S.D = Math.min(0.999, S.D + dD);
-        }
-        
-        // Count cycles (for oscillating load)
-        if (P.oscF > 0) {
-            S.cycles = Math.floor(S.t * P.oscF);
-        }
+        if(!S.damageEnabled) return;
+        const sigmaEff = sigma/(1-S.D);
+        if(sigmaEff>10) S.D = Math.min(0.999, S.D + Math.pow(sigmaEff/(120*(1-S.D)),4)*dt*0.01);
+        if(P.oscF>0) S.cycles = Math.floor(S.t*P.oscF);
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// THERMODYNAMICS
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class Thermodynamics {
-    static dissipationRate(sigma, strainRate) {
-        // Viscoelastic dissipation
-        const tanD = Viscoelastic.tanDelta(2 * PI * Math.max(1, P.oscF));
-        return Math.abs(sigma * strainRate) * tanD;
+// Thermodynamics
+class Thermo {
+    static dissRate(sigma, strainRate) {
+        return Math.abs(sigma*strainRate)*Viscoelastic.tanDelta(2*PI*Math.max(1,P.oscF));
     }
-    
-    static entropyProduction(dissRate, T = P.temp + 273.15) {
-        return dissRate / T; // mW/K
-    }
+    static entropy(dissRate) { return dissRate/(P.temp+273.15); }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// STOCHASTIC (Langevin SDE)
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
+// Langevin
 class Langevin {
-    static thermalNoise(dt) {
-        if (!S.noiseEnabled) return 0;
-        const gamma = 0.1; // Damping (pN·s/nm)
-        const kT = P.kT; // pN·nm
-        const sigma = Math.sqrt(2 * gamma * kT * dt);
-        return sigma * randn() * 1e-9; // Convert to mm
+    static noise(dt) {
+        if(!S.noiseEnabled) return 0;
+        return Math.sqrt(2*0.1*P.kT*dt)*randn()*1e-9;
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// SAFETY GOVERNOR
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-class SafetyGovernor {
+// Safety
+class Governor {
     static check() {
-        if (!S.govActive) return { ok: true };
-        
-        const maxF = P.maxF;
-        if (S.F > maxF) return { ok: false, msg: `Force > ${maxF}N` };
-        if (S.sigmaVM > 100) return { ok: false, msg: `σ_vm > 100 MPa` };
-        if (S.KI / P.Kic > 0.90) return { ok: false, msg: `K_I > 90% K_IC` };
-        if (S.P_frac > 0.20) return { ok: false, msg: `P(fracture) > 20%` };
-        if (S.D > 0.5) return { ok: false, msg: `Damage D > 50%` };
-        
-        return { ok: true };
+        if(!S.govActive) return {ok:true};
+        if(S.F>P.maxF) return {ok:false,msg:`F>${P.maxF}N`};
+        if(S.sigmaVM>100) return {ok:false,msg:`σ>100MPa`};
+        if(S.KI/P.Kic>0.9) return {ok:false,msg:`K_I>90%`};
+        if(S.P_frac>0.2) return {ok:false,msg:`P(frac)>20%`};
+        if(S.D>0.5) return {ok:false,msg:`D>50%`};
+        return {ok:true};
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// UTILITY FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Utilities
+function gauss(x,mu,s) { const z=(x-mu)/s; return Math.exp(-0.5*z*z)/(s*Math.sqrt(2*PI)); }
+function randn() { let u=0,v=0; while(u===0)u=Math.random(); while(v===0)v=Math.random(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*PI*v); }
+function shuffle(a) { for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
 
-function gaussian(x, mu, sigma) {
-    const z = (x - mu) / sigma;
-    return Math.exp(-0.5 * z * z) / (sigma * Math.sqrt(2 * PI));
-}
-
-function randn() {
-    let u = 0, v = 0;
-    while (u === 0) u = Math.random();
-    while (v === 0) v = Math.random();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * PI * v);
-}
-
-function shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// SIMULATION STEP
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
+// Simulation Step
 function step() {
     const dt = S.dt;
-    
-    // Applied force
     S.F = P.force;
-    if (P.oscA > 0 && P.oscF > 0) {
-        const k = P.E0 * P.pdlArea / P.pdlW;
-        S.F += P.oscA * k * Math.sin(2 * PI * P.oscF * S.t);
+    if(P.oscA>0 && P.oscF>0) S.F += P.oscA*(P.E0*P.pdlArea/P.pdlW)*Math.sin(2*PI*P.oscF*S.t);
+    
+    const safe = Governor.check();
+    if(!safe.ok && !S.govTriggered) {
+        S.govTriggered=true; S.running=false;
+        addLog(`GOV: ${safe.msg}`,'error'); setStatus('critical'); return;
     }
     
-    // Safety check
-    const safe = SafetyGovernor.check();
-    if (!safe.ok && !S.govTriggered) {
-        S.govTriggered = true;
-        S.running = false;
-        addLog(`GOVERNOR: ${safe.msg}`, 'error');
-        setStatus('critical');
-        return;
-    }
+    const strain = S.x/P.pdlW, strainRate = S.v/P.pdlW;
+    Viscoelastic.updateQ(strainRate, dt);
+    const sigmaPdl = Viscoelastic.stress(strain);
+    const Fel = sigmaPdl * P.pdlArea;
+    const Fnet = S.F - Fel;
+    S.a = Fnet/0.002;
+    S.v += S.a*dt;
+    S.x = Math.max(0, S.x + S.v*dt + Langevin.noise(dt));
+    if(S.x<=0) S.v = Math.max(0,S.v);
     
-    // Strain
-    S.strain = S.x / P.pdlW;
-    S.strainRate = S.v / P.pdlW;
+    const Kt = Fracture.stressConc(P.curv, P.flaw);
+    S.sigma = Math.abs(sigmaPdl);
+    S.sigmaVM = Kt*S.sigma*(1+P.force/(P.pdlArea*0.1))*(1/(1-S.D));
+    S.sigma1 = S.sigmaVM*1.1;
+    S.KI = Fracture.KI(S.sigmaVM*1e6, S.crackLen)/1e6;
+    S.KII = Fracture.KII(S.sigmaVM*0.2*1e6, S.crackLen)/1e6;
+    S.J = Fracture.Jintegral(S.KI*1e6, S.KII*1e6);
+    if(S.KI>0) S.crackLen += Fracture.dadN(S.KI)*dt*P.oscF;
     
-    // Viscoelastic update
-    Viscoelastic.updateQ(S.strainRate, dt);
-    const sigma_pdl = Viscoelastic.stress(S.strain);
-    S.F_elastic = sigma_pdl * P.pdlArea;
+    Damage.update(S.sigmaVM, dt);
+    S.W_elastic = 0.5*Fel*S.x;
+    const diss = Thermo.dissRate(S.sigma, strainRate);
+    S.W_dissipated += diss*dt;
+    S.entropyProd = Thermo.entropy(diss);
     
-    // Net force & dynamics
-    const F_net = S.F - S.F_elastic;
-    const m = 0.002; // kg
-    S.a = F_net / m;
+    Kalman.predict(dt);
+    Kalman.update(S.x + (Math.random()-0.5)*0.005);
     
-    // Langevin noise
-    const noise = Langevin.thermalNoise(dt);
+    const kObs = S.x>0.001 ? S.F/S.x : P.E0*P.pdlArea/P.pdlW;
+    Bayes.update(kObs, S.KI/P.Kic);
     
-    S.v += S.a * dt;
-    S.x = Math.max(0, S.x + S.v * dt + noise);
-    if (S.x <= 0) S.v = Math.max(0, S.v);
-    
-    // Stress analysis
-    const Kt = Fracture.stressConcentration(P.curv, P.flaw);
-    S.sigma = Math.abs(sigma_pdl);
-    S.sigmaVM = Kt * S.sigma * (1 + P.force / (P.pdlArea * 0.1)) * (1 / (1 - S.D));
-    S.sigma1 = S.sigmaVM * 1.1;
-    S.sigma2 = S.sigmaVM * 0.3;
-    S.sigma3 = -S.sigmaVM * 0.1;
-    
-    // Fracture mechanics
-    S.KI = Fracture.KI(S.sigmaVM * 1e6, S.crackLen) / 1e6;
-    S.KII = Fracture.KII(S.sigmaVM * 0.2 * 1e6, S.crackLen) / 1e6;
-    S.J = Fracture.Jintegral(S.KI * 1e6, S.KII * 1e6);
-    
-    // Crack growth
-    if (S.KI > 0) {
-        S.crackLen += Fracture.dadN(S.KI) * dt * P.oscF;
-    }
-    
-    // Damage
-    DamageMechanics.update(S.sigmaVM, dt);
-    
-    // Energy
-    S.W_elastic = 0.5 * S.F_elastic * S.x;
-    const dissRate = Thermodynamics.dissipationRate(S.sigma, S.strainRate);
-    S.W_dissipated += dissRate * dt;
-    S.entropyProd = Thermodynamics.entropyProduction(dissRate);
-    
-    // Kalman
-    KalmanBucy.predict(dt);
-    KalmanBucy.update(S.x + (Math.random() - 0.5) * 0.005);
-    
-    // Bayesian
-    const kObs = S.x > 0.001 ? S.F / S.x : P.E0 * P.pdlArea / P.pdlW;
-    BayesianSMC.update(kObs, S.KI / P.Kic);
-    
-    // Acoustic emission
-    AcousticEmission.updateSpectrum(S.sigmaVM, S.KI / P.Kic);
-    if (Math.random() < AcousticEmission.eventRate(S.sigmaVM) * dt) {
+    AE.updateSpectrum(S.sigmaVM, S.KI/P.Kic);
+    if(Math.random() < AE.eventRate(S.sigmaVM)*dt) {
         S.aeCount++;
-        S.aeMagnitudes.push(Math.random() * S.sigmaVM / 10);
+        S.aeMagnitudes.push(Math.random()*S.sigmaVM/10);
     }
     
-    // Peaks
     S.peakF = Math.max(S.peakF, S.F);
     S.peakX = Math.max(S.peakX, S.x);
-    S.peakSigma = Math.max(S.peakSigma, S.sigmaVM);
     
-    // History
-    if (S.hist.t.length < 5000) {
-        S.hist.t.push(S.t);
-        S.hist.x.push(S.x);
-        S.hist.v.push(S.v);
-        S.hist.F.push(S.F);
-        S.hist.sigma.push(S.sigmaVM);
-        S.hist.KI.push(S.KI);
-        S.hist.D.push(S.D);
-        S.hist.W.push(S.W_elastic);
+    if(S.hist.t.length<5000) {
+        S.hist.t.push(S.t); S.hist.x.push(S.x); S.hist.v.push(S.v);
+        S.hist.F.push(S.F); S.hist.sigma.push(S.sigmaVM);
+        S.hist.KI.push(S.KI); S.hist.D.push(S.D); S.hist.W.push(S.W_elastic);
     }
-    
     S.t += dt;
     
-    // Status
-    const KIr = S.KI / P.Kic;
-    if (KIr > 0.7 || S.P_frac > 0.1 || S.D > 0.3) setStatus('critical');
-    else if (KIr > 0.4 || S.P_frac > 0.05 || S.D > 0.15) setStatus('caution');
+    const KIr = S.KI/P.Kic;
+    if(KIr>0.7||S.P_frac>0.1||S.D>0.3) setStatus('critical');
+    else if(KIr>0.4||S.P_frac>0.05||S.D>0.15) setStatus('caution');
     else setStatus('nominal');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// RENDERING
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
+// Rendering
 let mainC, mainCtx, stressC, stressCtx, mcC, mcCtx;
-let mainView = 'fd', stressView = 'stress', mcView = 'scatter';
+let mainView='fd', stressView='KI', mcView='scatter';
 
 function initCanvas() {
-    mainC = document.getElementById('mainCanvas');
-    mainCtx = mainC.getContext('2d');
-    stressC = document.getElementById('stressCanvas');
-    stressCtx = stressC.getContext('2d');
-    mcC = document.getElementById('mcCanvas');
-    mcCtx = mcC.getContext('2d');
-    
-    resize();
-    window.addEventListener('resize', resize);
+    mainC=document.getElementById('mainCanvas'); mainCtx=mainC.getContext('2d');
+    stressC=document.getElementById('stressCanvas'); stressCtx=stressC.getContext('2d');
+    mcC=document.getElementById('mcCanvas'); mcCtx=mcC.getContext('2d');
+    resize(); window.addEventListener('resize',resize);
 }
 
 function resize() {
-    [mainC, stressC, mcC].forEach(c => {
-        if (!c) return;
-        const r = c.parentElement.getBoundingClientRect();
-        const dpr = devicePixelRatio || 1;
-        c.width = r.width * dpr;
-        c.height = r.height * dpr;
-        c.getContext('2d').scale(dpr, dpr);
+    [mainC,stressC,mcC].forEach(c=>{
+        if(!c)return;
+        const r=c.parentElement.getBoundingClientRect(), dpr=devicePixelRatio||1;
+        c.width=r.width*dpr; c.height=r.height*dpr;
+        c.getContext('2d').scale(dpr,dpr);
     });
 }
 
 function renderMain() {
-    const w = mainC.width / (devicePixelRatio || 1);
-    const h = mainC.height / (devicePixelRatio || 1);
-    const ctx = mainCtx;
-    const pad = { t: 35, r: 50, b: 45, l: 60 };
-    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    const w=mainC.width/(devicePixelRatio||1), h=mainC.height/(devicePixelRatio||1);
+    const ctx=mainCtx, pad={t:30,r:40,b:35,l:50}, pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+    ctx.clearRect(0,0,w,h); ctx.fillStyle='#060a10'; ctx.fillRect(0,0,w,h);
     
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#060a10';
-    ctx.fillRect(0, 0, w, h);
-    
-    // Grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 5; i++) {
-        const x = pad.l + pw * i / 5, y = pad.t + ph * i / 5;
-        ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, h - pad.b); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.04)';
+    for(let i=0;i<=5;i++){
+        const x=pad.l+pw*i/5, y=pad.t+ph*i/5;
+        ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,h-pad.b); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(w-pad.r,y); ctx.stroke();
     }
     
-    if (mainView === 'fd') {
-        // Safety zones
-        const cX = pad.l + (P.maxF * 0.6 / 200) * pw;
-        const dX = pad.l + (P.maxF / 200) * pw;
-        ctx.fillStyle = 'rgba(0, 228, 184, 0.06)';
-        ctx.fillRect(pad.l, pad.t, cX - pad.l, ph);
-        ctx.fillStyle = 'rgba(255, 192, 32, 0.06)';
-        ctx.fillRect(cX, pad.t, dX - cX, ph);
-        ctx.fillStyle = 'rgba(255, 48, 80, 0.08)';
-        ctx.fillRect(dX, pad.t, w - pad.r - dX, ph);
+    if(mainView==='fd') {
+        const cX=pad.l+(P.maxF*0.6/200)*pw, dX=pad.l+(P.maxF/200)*pw;
+        ctx.fillStyle='rgba(0,228,184,0.06)'; ctx.fillRect(pad.l,pad.t,cX-pad.l,ph);
+        ctx.fillStyle='rgba(255,192,32,0.06)'; ctx.fillRect(cX,pad.t,dX-cX,ph);
+        ctx.fillStyle='rgba(255,48,80,0.08)'; ctx.fillRect(dX,pad.t,w-pad.r-dX,ph);
         
-        // Curve
-        if (S.hist.F.length > 1) {
-            ctx.beginPath();
-            ctx.strokeStyle = '#00e4b8';
-            ctx.lineWidth = 2;
-            for (let i = 0; i < S.hist.F.length; i++) {
-                const x = pad.l + (S.hist.F[i] / 200) * pw;
-                const y = h - pad.b - (S.hist.x[i] / 1.5) * ph;
-                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        if(S.hist.F.length>1) {
+            ctx.beginPath(); ctx.strokeStyle='#00e4b8'; ctx.lineWidth=2;
+            for(let i=0;i<S.hist.F.length;i++){
+                const x=pad.l+(S.hist.F[i]/200)*pw, y=h-pad.b-(S.hist.x[i]/1.5)*ph;
+                i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
             }
             ctx.stroke();
         }
-        
-        // Current point
-        const cx = pad.l + (S.F / 200) * pw;
-        const cy = Math.max(pad.t, Math.min(h - pad.b, h - pad.b - (S.x / 1.5) * ph));
-        ctx.beginPath();
-        ctx.arc(cx, cy, 5, 0, 2 * PI);
-        ctx.fillStyle = S.P_frac > 0.1 ? '#ff3050' : S.P_frac > 0.05 ? '#ffc020' : '#00e4b8';
+        const cx=pad.l+(S.F/200)*pw, cy=Math.max(pad.t,Math.min(h-pad.b,h-pad.b-(S.x/1.5)*ph));
+        ctx.beginPath(); ctx.arc(cx,cy,4,0,2*PI);
+        ctx.fillStyle=S.P_frac>0.1?'#ff3050':S.P_frac>0.05?'#ffc020':'#00e4b8';
         ctx.fill();
-        
-        ctx.fillStyle = 'rgba(255,255,255,0.5)';
-        ctx.font = '10px Inter';
-        ctx.textAlign = 'center';
-        ctx.fillText('Force (N)', w / 2, h - 8);
     }
-    
-    // Title
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '11px Inter';
-    ctx.textAlign = 'left';
-    ctx.fillText(mainView === 'fd' ? 'Force-Displacement' : mainView === 'phase' ? 'Phase Space' : 'Stress-Strain', pad.l, 20);
+    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='10px Inter'; ctx.textAlign='left';
+    ctx.fillText(mainView==='fd'?'F-D Curve':mainView==='phase'?'Phase Space':'σ-ε',pad.l,18);
 }
 
 function renderStress() {
-    const w = stressC.width / (devicePixelRatio || 1);
-    const h = stressC.height / (devicePixelRatio || 1);
-    const ctx = stressCtx;
-    const pad = { t: 35, r: 50, b: 45, l: 60 };
-    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    const w=stressC.width/(devicePixelRatio||1), h=stressC.height/(devicePixelRatio||1);
+    const ctx=stressCtx, pad={t:30,r:40,b:35,l:50}, pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+    ctx.clearRect(0,0,w,h); ctx.fillStyle='#060a10'; ctx.fillRect(0,0,w,h);
     
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#060a10';
-    ctx.fillRect(0, 0, w, h);
-    
-    if (stressView === 'KI' && S.hist.KI.length > 1) {
-        // Critical line
-        ctx.strokeStyle = 'rgba(255,48,80,0.4)';
-        ctx.setLineDash([4, 4]);
-        const critY = pad.t + ph * (1 - 1 / 1.5);
-        ctx.beginPath();
-        ctx.moveTo(pad.l, critY);
-        ctx.lineTo(w - pad.r, critY);
-        ctx.stroke();
+    if(stressView==='KI' && S.hist.KI.length>1) {
+        ctx.strokeStyle='rgba(255,48,80,0.4)'; ctx.setLineDash([4,4]);
+        const critY=pad.t+ph*(1-1/1.5);
+        ctx.beginPath(); ctx.moveTo(pad.l,critY); ctx.lineTo(w-pad.r,critY); ctx.stroke();
         ctx.setLineDash([]);
         
-        // K_I curve
-        ctx.beginPath();
-        ctx.strokeStyle = '#ff60a0';
-        ctx.lineWidth = 2;
-        const tMax = Math.max(5, S.t);
-        for (let i = 0; i < S.hist.KI.length; i++) {
-            const r = S.hist.KI[i] / P.Kic;
-            const x = pad.l + (S.hist.t[i] / tMax) * pw;
-            const y = pad.t + ph * (1 - r / 1.5);
-            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        ctx.beginPath(); ctx.strokeStyle='#ff60a0'; ctx.lineWidth=2;
+        const tMax=Math.max(5,S.t);
+        for(let i=0;i<S.hist.KI.length;i++){
+            const r=S.hist.KI[i]/P.Kic;
+            const x=pad.l+(S.hist.t[i]/tMax)*pw, y=pad.t+ph*(1-r/1.5);
+            i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
         }
         ctx.stroke();
     }
-    
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '11px Inter';
-    ctx.textAlign = 'left';
-    ctx.fillText(stressView === 'stress' ? 'Stress Field' : stressView === 'KI' ? 'K_I / K_IC History' : 'J-Integral', pad.l, 20);
+    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='10px Inter'; ctx.textAlign='left';
+    ctx.fillText('K_I / K_IC',pad.l,18);
 }
 
 function renderMC() {
-    const w = mcC.width / (devicePixelRatio || 1);
-    const h = mcC.height / (devicePixelRatio || 1);
-    const ctx = mcCtx;
-    const pad = { t: 35, r: 50, b: 45, l: 60 };
-    const pw = w - pad.l - pad.r, ph = h - pad.t - pad.b;
+    const w=mcC.width/(devicePixelRatio||1), h=mcC.height/(devicePixelRatio||1);
+    const ctx=mcCtx, pad={t:30,r:40,b:35,l:50}, pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+    ctx.clearRect(0,0,w,h); ctx.fillStyle='#060a10'; ctx.fillRect(0,0,w,h);
     
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#060a10';
-    ctx.fillRect(0, 0, w, h);
-    
-    if (S.mcResults && mcView === 'scatter') {
-        const samples = S.mcResults.samples;
-        const KImax = Math.max(...samples.KI, P.Kic) * 1.2;
-        const sigmaMax = Math.max(...samples.sigma) * 1.2;
-        
-        // K_IC threshold
-        ctx.strokeStyle = 'rgba(255,48,80,0.5)';
-        ctx.setLineDash([4, 4]);
-        const kicX = pad.l + (P.Kic / KImax) * pw;
-        ctx.beginPath();
-        ctx.moveTo(kicX, pad.t);
-        ctx.lineTo(kicX, h - pad.b);
-        ctx.stroke();
+    if(S.mcResults && mcView==='scatter') {
+        const samp=S.mcResults.samples;
+        const KImax=Math.max(...samp.KI,P.Kic)*1.2, sigMax=Math.max(...samp.sigma)*1.2;
+        ctx.strokeStyle='rgba(255,48,80,0.5)'; ctx.setLineDash([4,4]);
+        const kicX=pad.l+(P.Kic/KImax)*pw;
+        ctx.beginPath(); ctx.moveTo(kicX,pad.t); ctx.lineTo(kicX,h-pad.b); ctx.stroke();
         ctx.setLineDash([]);
         
-        // Points
-        for (let i = 0; i < samples.KI.length; i++) {
-            const x = pad.l + (samples.KI[i] / KImax) * pw;
-            const y = h - pad.b - (samples.sigma[i] / sigmaMax) * ph;
-            ctx.beginPath();
-            ctx.arc(x, y, 2, 0, 2 * PI);
-            ctx.fillStyle = samples.KI[i] > P.Kic ? 'rgba(255,48,80,0.7)' : 'rgba(0,228,184,0.5)';
+        for(let i=0;i<samp.KI.length;i++){
+            const x=pad.l+(samp.KI[i]/KImax)*pw, y=h-pad.b-(samp.sigma[i]/sigMax)*ph;
+            ctx.beginPath(); ctx.arc(x,y,2,0,2*PI);
+            ctx.fillStyle=samp.KI[i]>P.Kic?'rgba(255,48,80,0.7)':'rgba(0,228,184,0.5)';
             ctx.fill();
         }
     }
-    
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '11px Inter';
-    ctx.textAlign = 'left';
-    ctx.fillText('Monte Carlo: K_I vs σ', pad.l, 20);
+    ctx.fillStyle='rgba(255,255,255,0.6)'; ctx.font='10px Inter'; ctx.textAlign='left';
+    ctx.fillText('MC: K_I vs σ',pad.l,18);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// UI UPDATES
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
+// UI
 function updateUI() {
-    document.getElementById('dForce').textContent = S.F.toFixed(1);
-    document.getElementById('dForcePk').textContent = S.peakF.toFixed(1);
-    document.getElementById('dDisp').textContent = S.x.toFixed(4);
-    document.getElementById('dPdlStr').textContent = ((S.x / P.pdlW) * 100).toFixed(0);
-    document.getElementById('dStiff').textContent = S.x > 0.001 ? (S.F / S.x).toFixed(0) : '--';
-    document.getElementById('dGt').textContent = Viscoelastic.G(S.t).toFixed(3);
-    document.getElementById('dStress').textContent = S.sigmaVM.toFixed(1);
-    document.getElementById('dS1').textContent = S.sigma1.toFixed(1);
-    document.getElementById('dKI').textContent = ((S.KI / P.Kic) * 100).toFixed(0);
-    document.getElementById('dJ').textContent = S.J.toFixed(2);
-    document.getElementById('dDamage').textContent = (S.D * 100).toFixed(1);
-    document.getElementById('dCycles').textContent = S.cycles;
-    document.getElementById('dEnergy').textContent = S.W_elastic.toFixed(3);
-    document.getElementById('dDiss').textContent = S.W_dissipated.toFixed(3);
-    document.getElementById('dEntropy').textContent = S.entropyProd.toFixed(4);
+    document.getElementById('dForce').textContent=S.F.toFixed(1);
+    document.getElementById('dFPk').textContent=S.peakF.toFixed(0);
+    document.getElementById('dDisp').textContent=S.x.toFixed(4);
+    document.getElementById('dStr').textContent=((S.x/P.pdlW)*100).toFixed(0);
+    document.getElementById('dStiff').textContent=S.x>0.001?(S.F/S.x).toFixed(0):'--';
+    document.getElementById('dGt').textContent=Viscoelastic.G(S.t).toFixed(2);
+    document.getElementById('dStress').textContent=S.sigmaVM.toFixed(1);
+    document.getElementById('dS1').textContent=S.sigma1.toFixed(1);
+    document.getElementById('dKI').textContent=((S.KI/P.Kic)*100).toFixed(0);
+    document.getElementById('dJ').textContent=S.J.toFixed(2);
+    document.getElementById('dDamage').textContent=(S.D*100).toFixed(1);
+    document.getElementById('dCyc').textContent=S.cycles;
+    document.getElementById('dEnergy').textContent=S.W_elastic.toFixed(3);
+    document.getElementById('dDiss').textContent=S.W_dissipated.toFixed(2);
+    document.getElementById('dEntropy').textContent=S.entropyProd.toFixed(4);
+    document.getElementById('timeDisplay').textContent=S.t.toFixed(3);
     
-    document.getElementById('timeDisplay').textContent = S.t.toFixed(4);
+    const KIr=S.KI/P.Kic;
+    document.getElementById('mKI').className='metric'+(KIr>0.7?' critical':KIr>0.4?' caution':'');
+    document.getElementById('mStress').className='metric'+(S.sigmaVM>70?' critical':S.sigmaVM>40?' caution':'');
+    document.getElementById('mDamage').className='metric'+(S.D>0.3?' critical':S.D>0.15?' caution':'');
     
-    // Metric classes
-    const KIr = S.KI / P.Kic;
-    document.getElementById('mKI').className = 'metric' + (KIr > 0.7 ? ' critical' : KIr > 0.4 ? ' caution' : '');
-    document.getElementById('mStress').className = 'metric' + (S.sigmaVM > 70 ? ' critical' : S.sigmaVM > 40 ? ' caution' : '');
-    document.getElementById('mDamage').className = 'metric' + (S.D > 0.3 ? ' critical' : S.D > 0.15 ? ' caution' : '');
+    document.getElementById('pNom').textContent=(S.P_nom*100).toFixed(1)+'%';
+    document.getElementById('pPdl').textContent=(S.P_pdl*100).toFixed(1)+'%';
+    document.getElementById('pBone').textContent=(S.P_bone*100).toFixed(1)+'%';
+    document.getElementById('pFrac').textContent=(S.P_frac*100).toFixed(1)+'%';
+    document.getElementById('bNom').style.width=(S.P_nom*100)+'%';
+    document.getElementById('bPdl').style.width=(S.P_pdl*100)+'%';
+    document.getElementById('bBone').style.width=(S.P_bone*100)+'%';
+    document.getElementById('bFrac').style.width=(S.P_frac*100)+'%';
     
-    // Probabilities
-    document.getElementById('pNom').textContent = (S.P_nom * 100).toFixed(1) + '%';
-    document.getElementById('pPdl').textContent = (S.P_pdl * 100).toFixed(1) + '%';
-    document.getElementById('pBone').textContent = (S.P_bone * 100).toFixed(1) + '%';
-    document.getElementById('pFrac').textContent = (S.P_frac * 100).toFixed(1) + '%';
-    document.getElementById('bNom').style.width = (S.P_nom * 100) + '%';
-    document.getElementById('bPdl').style.width = (S.P_pdl * 100) + '%';
-    document.getElementById('bBone').style.width = (S.P_bone * 100) + '%';
-    document.getElementById('bFrac').style.width = (S.P_frac * 100) + '%';
+    const risk=S.P_pdl+S.P_bone+S.P_frac;
+    document.getElementById('riskNeedle').setAttribute('transform',`rotate(${-90+risk*180},80,75)`);
+    document.getElementById('riskValue').textContent=(risk*100).toFixed(1)+'%';
     
-    // Risk gauge
-    const risk = S.P_pdl + S.P_bone + S.P_frac;
-    document.getElementById('riskNeedle').setAttribute('transform', `rotate(${-90 + risk * 180}, 80, 80)`);
-    document.getElementById('riskValue').textContent = (risk * 100).toFixed(1) + '%';
+    document.getElementById('vQ1').textContent=S.Q1.toFixed(5);
+    document.getElementById('vQ2').textContent=S.Q2.toFixed(5);
+    document.getElementById('vQ3').textContent=S.Q3.toFixed(5);
+    document.getElementById('vGtR').textContent=Viscoelastic.G(S.t).toFixed(3);
+    document.getElementById('vTanD').textContent=Viscoelastic.tanDelta(2*PI*Math.max(1,P.oscF)).toFixed(4);
     
-    // Viscoelastic state
-    document.getElementById('vQ1').textContent = S.Q1.toFixed(5);
-    document.getElementById('vQ2').textContent = S.Q2.toFixed(5);
-    document.getElementById('vQ3').textContent = S.Q3.toFixed(5);
-    document.getElementById('vGt').textContent = Viscoelastic.G(S.t).toFixed(4);
-    document.getElementById('vTanD').textContent = Viscoelastic.tanDelta(2 * PI * Math.max(1, P.oscF)).toFixed(4);
+    document.getElementById('kX').textContent=S.kalman.x[0].toFixed(4);
+    document.getElementById('kV').textContent=S.kalman.x[1].toFixed(4);
+    document.getElementById('kA').textContent=S.kalman.x[2].toFixed(4);
     
-    // Kalman
-    document.getElementById('kX').textContent = S.kalman.x[0].toFixed(4);
-    document.getElementById('kV').textContent = S.kalman.x[1].toFixed(4);
-    document.getElementById('kA').textContent = S.kalman.x[2].toFixed(4);
-    document.getElementById('P00').textContent = S.kalman.P[0][0].toFixed(4);
-    document.getElementById('P11').textContent = S.kalman.P[1][1].toFixed(4);
-    document.getElementById('P22').textContent = S.kalman.P[2][2].toFixed(4);
+    document.getElementById('aeCount').textContent=S.aeCount;
+    const bV=AE.bValue(); document.getElementById('bValue').textContent=bV?bV.toFixed(2):'--';
     
-    // AE
-    document.getElementById('aeCount').textContent = S.aeCount;
-    const bVal = AcousticEmission.bValue();
-    document.getElementById('bValue').textContent = bVal ? bVal.toFixed(2) : '--';
-    
-    const specEl = document.getElementById('aeSpectrum');
-    specEl.innerHTML = S.aeSpectrum.map((v, i) => {
-        const cls = v > 0.7 ? 'high' : v > 0.4 ? 'mid' : '';
-        return `<div class="spectrum-bar ${cls}" style="height:${Math.max(3, v * 100)}%"></div>`;
+    const specEl=document.getElementById('aeSpectrum');
+    specEl.innerHTML=S.aeSpectrum.map((v,i)=>{
+        const cls=v>0.7?'high':v>0.4?'mid':'';
+        return `<div class="spectrum-bar ${cls}" style="height:${Math.max(3,v*100)}%"></div>`;
     }).join('');
     
-    // MC results
-    if (S.mcResults) {
-        document.getElementById('mcKI').textContent = 
-            `${S.mcResults.KI_mean.toFixed(2)} ± ${S.mcResults.KI_std.toFixed(2)}`;
-        document.getElementById('mcPfail').textContent = (S.mcResults.Pfail * 100).toFixed(1) + '%';
-        document.getElementById('mcCI').textContent = 
-            `${S.mcResults.KI_p05.toFixed(2)} to ${S.mcResults.KI_p95.toFixed(2)}`;
-        document.getElementById('sobolE0').textContent = '0.35';
+    if(S.mcResults){
+        document.getElementById('mcKI').textContent=`${S.mcResults.KI_mean.toFixed(2)}±${S.mcResults.KI_std.toFixed(2)}`;
+        document.getElementById('mcPfail').textContent=(S.mcResults.Pfail*100).toFixed(1)+'%';
+        document.getElementById('mcCI').textContent=`${S.mcResults.KI_p05.toFixed(2)}-${S.mcResults.KI_p95.toFixed(2)}`;
     }
 }
 
 function setStatus(s) {
-    document.getElementById('globalStatus').className = 'status-chip ' + s;
-    document.getElementById('statusLabel').textContent = s.toUpperCase();
+    document.getElementById('globalStatus').className='status-chip '+s;
+    document.getElementById('statusLabel').textContent=s.toUpperCase();
 }
 
-function addLog(msg, type = '') {
-    const log = document.getElementById('logViewer');
-    const t = S.t.toFixed(3).padStart(8, '0');
-    const e = document.createElement('div');
-    e.className = 'log-entry';
-    e.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${type}">${msg}</span>`;
-    log.appendChild(e);
-    log.scrollTop = log.scrollHeight;
-    while (log.children.length > 80) log.removeChild(log.firstChild);
+function addLog(msg,type='') {
+    const log=document.getElementById('logViewer');
+    const t=S.t.toFixed(2).padStart(7,'0');
+    const e=document.createElement('div');
+    e.className='log-entry';
+    e.innerHTML=`<span class="log-time">${t}</span><span class="log-msg ${type}">${msg}</span>`;
+    log.appendChild(e); log.scrollTop=log.scrollHeight;
+    while(log.children.length>60) log.removeChild(log.firstChild);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// ANIMATION
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
+// Animation
 function animate() {
-    if (!S.running) return;
-    for (let i = 0; i < 10; i++) { step(); if (!S.running) break; }
-    renderMain();
-    renderStress();
-    updateUI();
+    if(!S.running) return;
+    for(let i=0;i<10;i++){step();if(!S.running)break;}
+    renderMain(); renderStress(); updateUI();
     requestAnimationFrame(animate);
 }
 
-function start() {
-    if (!S.running) {
-        S.running = true;
-        S.govTriggered = false;
-        addLog('Simulation started', 'info');
-        animate();
-    }
-}
-
-function stop() {
-    S.running = false;
-    addLog('Stopped', 'warn');
-}
-
+function start() { if(!S.running){S.running=true;S.govTriggered=false;addLog('Started','info');animate();}}
+function stop() { S.running=false; addLog('Stopped','warn'); }
 function reset() {
     stop();
-    Object.assign(S, {
-        t: 0, x: 0, v: 0, a: 0, F: 0, Q1: 0, Q2: 0, Q3: 0,
-        sigma: 0, sigmaVM: 0, KI: 0, KII: 0, J: 0, D: 0, cycles: 0,
-        W_elastic: 0, W_dissipated: 0, entropyProd: 0,
-        P_nom: 1, P_pdl: 0, P_bone: 0, P_frac: 0,
-        crackLen: P.flaw * 1e-6, aeCount: 0, aeMagnitudes: [],
-        peakF: 0, peakX: 0, peakSigma: 0, govTriggered: false
-    });
-    S.kalman = { x: [0, 0, 0], P: [[0.01, 0, 0], [0, 0.1, 0], [0, 0, 1.0]] };
-    S.aeSpectrum = new Array(32).fill(0);
-    S.hist = { t: [], x: [], v: [], F: [], sigma: [], KI: [], D: [], W: [] };
-    setStatus('nominal');
-    updateUI();
-    renderMain();
-    renderStress();
-    renderMC();
-    addLog('Reset complete', 'success');
+    Object.assign(S,{t:0,x:0,v:0,a:0,F:0,Q1:0,Q2:0,Q3:0,sigma:0,sigmaVM:0,KI:0,KII:0,J:0,D:0,cycles:0,
+        W_elastic:0,W_dissipated:0,entropyProd:0,P_nom:1,P_pdl:0,P_bone:0,P_frac:0,
+        crackLen:P.flaw*1e-6,aeCount:0,aeMagnitudes:[],peakF:0,peakX:0,govTriggered:false});
+    S.kalman={x:[0,0,0],P:[[0.01,0,0],[0,0.1,0],[0,0,1]]};
+    S.aeSpectrum=new Array(32).fill(0);
+    S.hist={t:[],x:[],v:[],F:[],sigma:[],KI:[],D:[],W:[]};
+    setStatus('nominal'); updateUI(); renderMain(); renderStress(); renderMC();
+    addLog('Reset','success');
 }
 
 function runMC() {
-    addLog(`Running Monte Carlo (N=${P.mcN})...`, 'info');
-    setTimeout(() => {
-        const res = MonteCarlo.run();
-        addLog(`MC complete: P(fail)=${(res.Pfail*100).toFixed(1)}%`, 'success');
-        renderMC();
-        updateUI();
-    }, 50);
+    addLog(`MC N=${P.mcN}...`,'info');
+    setTimeout(()=>{const r=MC.run();addLog(`P(fail)=${(r.Pfail*100).toFixed(1)}%`,'success');renderMC();updateUI();},50);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// EVENT HANDLERS
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-function setupHandlers() {
-    // Parameter sliders
-    const sliders = [
-        ['rootLen', 'rootLen', 'vRootLen', 1],
-        ['rootDia', 'rootDia', 'vRootDia', 1],
-        ['curv', 'curv', 'vCurv', 2],
-        ['pdlW', 'pdlW', 'vPdlW', 2],
-        ['E0', 'E0', 'vE0', 2],
-        ['Einf', 'Einf', 'vEinf', 2],
-        ['tau1', 'tau1', 'vTau1', 1],
-        ['tau2', 'tau2', 'vTau2', 1],
-        ['tau3', 'tau3', 'vTau3', 0],
-        ['g1', 'g1', 'vG1', 2],
-        ['g2', 'g2', 'vG2', 2],
-        ['nuPdl', 'nuPdl', 'vNuPdl', 2],
-        ['boneE1', 'boneE1', 'vBoneE1', 1],
-        ['boneE2', 'boneE2', 'vBoneE2', 1],
-        ['boneG', 'boneG', 'vBoneG', 1],
-        ['boneNu12', 'boneNu12', 'vBoneNu12', 2],
-        ['boneNu23', 'boneNu23', 'vBoneNu23', 2],
-        ['boneRho', 'boneRho', 'vBoneRho', 2],
-        ['Kic', 'Kic', 'vKic', 1],
-        ['KicPara', 'KicPara', 'vKicPara', 1],
-        ['flaw', 'flaw', 'vFlaw', 0],
-        ['parisM', 'parisM', 'vParisM', 1],
-        ['force', 'force', 'vForce', 0],
-        ['torque', 'torque', 'vTorque', 0],
-        ['oscA', 'oscA', 'vOscA', 2],
-        ['oscF', 'oscF', 'vOscF', 0],
-        ['temp', 'temp', 'vTemp', 1],
-        ['mcN', 'mcN', 'vMcN', 0],
-        ['cov', 'cov', 'vCov', 0]
+// Event handlers
+function setup() {
+    const sliders=[
+        ['rootLen','rootLen','vRL',1],['curv','curv','vCurv',2],['pdlW','pdlW','vPdlW',2],
+        ['E0','E0','vE0',2],['Einf','Einf','vEinf',2],['tau1','tau1','vTau1',1],['tau2','tau2','vTau2',1],
+        ['tau3','tau3','vTau3',0],['g1','g1','vG1',2],['g2','g2','vG2',2],
+        ['boneE1','boneE1','vBE1',1],['boneE2','boneE2','vBE2',1],['boneG','boneG','vBG',1],
+        ['Kic','Kic','vKic',1],['flaw','flaw','vFlaw',0],['parisM','parisM','vParisM',1],
+        ['force','force','vForce',0],['oscA','oscA','vOscA',2],['oscF','oscF','vOscF',0],
+        ['temp','temp','vTemp',1],['mcN','mcN','vMcN',0],['cov','cov','vCov',0]
     ];
-    
-    sliders.forEach(([id, param, disp, prec]) => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('input', e => {
-                let v = parseFloat(e.target.value);
-                if (id === 'parisC') v = Math.pow(10, v);
-                P[param] = v;
-                document.getElementById(disp).textContent = 
-                    id === 'parisC' ? v.toExponential(0) : v.toFixed(prec);
-            });
-        }
+    sliders.forEach(([id,param,disp,prec])=>{
+        const el=document.getElementById(id);
+        if(el) el.addEventListener('input',e=>{P[param]=parseFloat(e.target.value);document.getElementById(disp).textContent=P[param].toFixed(prec);});
     });
     
-    document.getElementById('toothType').addEventListener('change', e => {
-        P.toothType = e.target.value;
-        const t = TEETH[e.target.value];
-        if (t) {
-            document.getElementById('vPdlArea').textContent = t.pdlArea;
-            P.rootLen = t.rootLen;
-            P.rootDia = t.rootDia;
-            P.curv = t.curv;
-        }
-        addLog(`Tooth: ${e.target.value}`, 'info');
-    });
+    document.getElementById('toothType').addEventListener('change',e=>{P.toothType=e.target.value;addLog(`Tooth:${e.target.value}`,'info');});
+    document.getElementById('btnRun').addEventListener('click',start);
+    document.getElementById('btnStep').addEventListener('click',()=>{for(let i=0;i<10;i++)step();renderMain();renderStress();updateUI();});
+    document.getElementById('btnMC').addEventListener('click',runMC);
+    document.getElementById('btnReset').addEventListener('click',reset);
+    document.getElementById('btnStop').addEventListener('click',()=>{stop();addLog('E-STOP','error');setStatus('critical');});
+    document.getElementById('chkGov').addEventListener('change',e=>{S.govActive=e.target.checked;addLog(`Gov ${e.target.checked?'ON':'OFF'}`,e.target.checked?'info':'warn');});
+    document.getElementById('chkNoise').addEventListener('change',e=>S.noiseEnabled=e.target.checked);
+    document.getElementById('chkDamage').addEventListener('change',e=>S.damageEnabled=e.target.checked);
     
-    // Buttons
-    document.getElementById('btnRun').addEventListener('click', start);
-    document.getElementById('btnStep').addEventListener('click', () => {
-        for (let i = 0; i < 10; i++) step();
-        renderMain(); renderStress(); updateUI();
-    });
-    document.getElementById('btnMC').addEventListener('click', runMC);
-    document.getElementById('btnReset').addEventListener('click', reset);
-    document.getElementById('btnStop').addEventListener('click', () => {
-        stop();
-        addLog('E-STOP activated', 'error');
-        setStatus('critical');
-    });
+    document.querySelectorAll('.viz-tab').forEach(tab=>tab.addEventListener('click',e=>{
+        const v=e.target.dataset.view, c=e.target.closest('.viz-card');
+        c.querySelectorAll('.viz-tab').forEach(t=>t.classList.remove('active'));
+        e.target.classList.add('active');
+        if(c.querySelector('#mainCanvas')){mainView=v;renderMain();}
+        else if(c.querySelector('#stressCanvas')){stressView=v;renderStress();}
+        else if(c.querySelector('#mcCanvas')){mcView=v;renderMC();}
+    }));
     
-    // Checkboxes
-    document.getElementById('chkGov').addEventListener('change', e => {
-        S.govActive = e.target.checked;
-        addLog(`Governor ${e.target.checked ? 'ON' : 'OFF'}`, e.target.checked ? 'info' : 'warn');
-    });
-    document.getElementById('chkNoise').addEventListener('change', e => S.noiseEnabled = e.target.checked);
-    document.getElementById('chkDamage').addEventListener('change', e => S.damageEnabled = e.target.checked);
-    
-    // Viz tabs
-    document.querySelectorAll('.viz-tab').forEach(tab => {
-        tab.addEventListener('click', e => {
-            const view = e.target.dataset.view;
-            const container = e.target.closest('.viz-card');
-            container.querySelectorAll('.viz-tab').forEach(t => t.classList.remove('active'));
-            e.target.classList.add('active');
-            
-            if (container.querySelector('#mainCanvas')) { mainView = view; renderMain(); }
-            else if (container.querySelector('#stressCanvas')) { stressView = view; renderStress(); }
-            else if (container.querySelector('#mcCanvas')) { mcView = view; renderMC(); }
-        });
-    });
-    
-    // Theory tabs
-    document.querySelectorAll('.theory-tab').forEach(tab => {
-        tab.addEventListener('click', e => {
-            document.querySelectorAll('.theory-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.theory-content').forEach(c => c.classList.remove('active'));
-            e.target.classList.add('active');
-            document.getElementById('tab-' + e.target.dataset.tab).classList.add('active');
-        });
-    });
+    document.querySelectorAll('.theory-tab').forEach(tab=>tab.addEventListener('click',e=>{
+        document.querySelectorAll('.theory-tab').forEach(t=>t.classList.remove('active'));
+        document.querySelectorAll('.theory-content').forEach(c=>c.classList.remove('active'));
+        e.target.classList.add('active');
+        document.getElementById('tab-'+e.target.dataset.tab).classList.add('active');
+    }));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-// INITIALIZATION
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
-window.addEventListener('load', () => {
-    initCanvas();
-    setupHandlers();
-    renderMain();
-    renderStress();
-    renderMC();
-    updateUI();
-    
-    addLog('PhD Biomechanics Simulation v3.0 initialized', 'success');
-    addLog('3-term Prony QLV model loaded', 'info');
-    addLog('Anisotropic bone (transverse isotropy)', 'info');
-    addLog('LEFM + J-integral + Paris law', 'info');
-    addLog('Sequential Monte Carlo (Bayesian)', 'info');
-    addLog('Kalman-Bucy filter active', 'info');
-    addLog('Continuum damage mechanics enabled', 'info');
-    addLog('Langevin SDE thermal fluctuations', 'info');
+window.addEventListener('load',()=>{
+    initCanvas(); setup();
+    renderMain(); renderStress(); renderMC(); updateUI();
+    addLog('PhD Simulation v3.0','success');
+    addLog('3-term Prony QLV','info');
+    addLog('Anisotropic bone','info');
+    addLog('LEFM + J-integral','info');
+    addLog('Bayesian SMC','info');
+    addLog('Kalman-Bucy','info');
+    addLog('Damage mechanics','info');
+    addLog('Langevin SDE','info');
 });
 </script>
 </body>

